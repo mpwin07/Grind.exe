@@ -10,7 +10,11 @@ export default defineConfig(({ command }) => ({
   plugins: [
     tsConfigPaths(),
     command === "build" ? cloudflare() : undefined,
-    TanStackRouterVite(),
+    TanStackRouterVite({
+      codeSplittingOptions: {
+        addHmr: false,
+      },
+    }),
     tanstackStart({
       server: { entry: "server" },
       serverFns: { disableCsrfMiddlewareWarning: true },
