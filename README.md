@@ -4,7 +4,7 @@ An AI-powered, highly customized LeetCode tracking dashboard designed with a sle
 
 ## ✨ Features
 
-- **AI Mode**: Powered by Google Gemini. Get intelligent problem recommendations, study plans, and topic analysis customized to your actual LeetCode profile weaknesses.
+- **AI Mode**: Powered by Groq. Get intelligent problem recommendations, study plans, and topic analysis customized to your actual LeetCode profile weaknesses.
 - **Dynamic Streaks Dashboard**: Real-time tracking of your weekly and monthly problem-solving consistency.
 - **Interactive Heatmap**: GitHub-style submission calendar heatmap to visualize your daily grind.
 - **Skill Breakdown**: Beautiful SVG donut charts visualizing your performance across Easy, Medium, and Hard difficulties.
@@ -20,7 +20,7 @@ An AI-powered, highly customized LeetCode tracking dashboard designed with a sle
 - **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
 - **Icons**: [Lucide React](https://lucide.dev/)
 - **Backend/DB**: [Supabase](https://supabase.com/)
-- **AI Integration**: [Google Gemini API](https://ai.google.dev/)
+- **AI Integration**: [Groq API](https://console.groq.com/docs/quickstart)
 
 ## 🚀 Getting Started
 
@@ -46,12 +46,8 @@ Ensure you have the following installed:
 3. Set up environment variables:
    Create a `.env` file in the root directory and add your API keys:
    ```env
-   # Your Google Gemini API Key
-   GEMINI_API_KEY=your_gemini_api_key_here
-
-   # Supabase Configuration
-   SUPABASE_URL=your_supabase_url
-   SUPABASE_PUBLISHABLE_KEY=your_supabase_anon_key
+   # Your Groq API Key
+   GROQ_API_KEY=your_groq_api_key_here
    ```
 
 4. Start the development server:
@@ -67,7 +63,7 @@ Ensure you have the following installed:
 
 ## 🎮 Usage
 
-1. Open `http://localhost:5173` in your browser.
+1. Open `http://localhost:8080` in your browser.
 2. Link your LeetCode username via the settings or dashboard prompt.
 3. Access **AI Mode** to generate custom practice sets.
 4. Check the **Streaks** tab to visualize your consistency and claim milestones.

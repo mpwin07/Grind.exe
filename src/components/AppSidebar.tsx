@@ -1,4 +1,4 @@
-import { LayoutDashboard, Sparkles, Flame, Settings } from "lucide-react";
+import { LayoutDashboard, Sparkles, Flame, Settings, Timer } from "lucide-react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
@@ -6,6 +6,7 @@ const items = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, to: "/" as const },
   { id: "ai-mode", label: "AI Mode", icon: Sparkles, to: "/ai-mode" as const },
   { id: "streaks", label: "Streaks", icon: Flame, to: "/streaks" as const },
+  { id: "time-analytics", label: "Analytics", icon: Timer, to: "/time-analytics" as const },
 ];
 
 export function AppSidebar({

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { ExternalLink, RefreshCw, Trophy, TrendingUp } from "lucide-react";
@@ -24,6 +24,7 @@ export const Route = createFileRoute("/")({
 });
 
 const STORAGE_KEY = "lc:username";
+const AI_SUGGESTION_STORAGE_KEY = "lc:ai-suggestion";
 
 function Dashboard() {
   const [username, setUsername] = useState<string>("");
@@ -47,6 +48,19 @@ function Dashboard() {
   });
 
   const fetchSuggest = useServerFn(suggestNextProblem);
+  const getStoredSuggestion = (): AISuggestion | undefined => {
+    if (typeof window === "undefined") return undefined;
+    const stored = sessionStorage.getItem(AI_SUGGESTION_STORAGE_KEY);
+    if (stored) {
+      try {
+        return JSON.parse(stored) as AISuggestion;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  };
+
   const suggestQ = useQuery<AISuggestion>({
     queryKey: ["ai-suggest", username, profileQ.data?.totalSolved],
     queryFn: () =>
@@ -65,6 +79,7 @@ function Dashboard() {
     enabled: !!profileQ.data,
     staleTime: 1000 * 60 * 30,
     retry: 0,
+    placeholderData: getStoredSuggestion(),
   });
 
   useEffect(() => {
@@ -73,6 +88,15 @@ function Dashboard() {
   useEffect(() => {
     if (suggestQ.error) toast.error(`AI Coach: ${(suggestQ.error as Error).message}`);
   }, [suggestQ.error]);
+
+  // Persist AI suggestion to sessionStorage
+  useEffect(() => {
+    if (suggestQ.data) {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(AI_SUGGESTION_STORAGE_KEY, JSON.stringify(suggestQ.data));
+      }
+    }
+  }, [suggestQ.data]);
 
   const saveUsername = (u: string) => {
     localStorage.setItem(STORAGE_KEY, u);
@@ -99,7 +123,13 @@ function Dashboard() {
 
         <div className="grid grid-cols-12 gap-6 mt-10">
           <StreakCard streak={profileQ.data?.streak ?? 0} loading={profileQ.isLoading} />
-          <NextProblemCard suggest={suggestQ.data} loading={suggestQ.isLoading} />
+          <NextProblemCard 
+            suggest={suggestQ.data} 
+            loading={suggestQ.isLoading} 
+            onSkip={async () => {
+              await suggestQ.refetch();
+            }} 
+          />
           <ActivityHeatmap calendar={profileQ.data?.submissionCalendar ?? {}} />
         </div>
 
@@ -191,7 +221,24 @@ function StreakCard({ streak, loading }: { streak: number; loading: boolean }) {
   );
 }
 
-function NextProblemCard({ suggest, loading }: { suggest?: AISuggestion; loading: boolean }) {
+function NextProblemCard({ suggest, loading, onSkip }: { suggest?: AISuggestion; loading: boolean; onSkip?: () => Promise<void> }) {
+  const [skipping, setSkipping] = useState(false);
+  const queryClient = useQueryClient();
+
+  const handleSkip = async () => {
+    setSkipping(true);
+    try {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(AI_SUGGESTION_STORAGE_KEY);
+      }
+      // Remove cached data so it forces a fresh fetch
+      queryClient.removeQueries({ queryKey: ["ai-suggest"] });
+      await onSkip?.();
+    } finally {
+      setSkipping(false);
+    }
+  };
+
   const difficultyColor =
     suggest?.difficulty === "Hard"
       ? "bg-red-500/20 text-red-400"
@@ -237,10 +284,11 @@ function NextProblemCard({ suggest, loading }: { suggest?: AISuggestion; loading
             SOLVE NOW <ExternalLink className="size-4" />
           </a>
           <button
-            disabled={!suggest}
+            disabled={!suggest || loading || skipping}
+            onClick={handleSkip}
             className="px-6 py-3 border border-white/10 font-display text-sm font-bold tracking-wide hover:border-neon hover:text-neon transition rounded-lg cursor-glow disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            SKIP
+            {skipping ? "SKIPPING…" : "SKIP"}
           </button>
         </div>
       </div>

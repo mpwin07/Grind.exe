@@ -32,6 +32,7 @@ import { useServerFn } from "@tanstack/react-start";
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { UsernameDialog } from "@/components/UsernameDialog";
+import { getGroqApiStatus } from "@/lib/groq.functions";
 import { fetchLeetCodeProfile, type LCProfile } from "@/lib/leetcode.functions";
 
 export const Route = createFileRoute("/settings")({
@@ -111,7 +112,6 @@ function SettingsComponent() {
   const [active] = useState("settings");
   const [activeTab, setActiveTab] = useState<TabId>("account");
   const [showApiKey, setShowApiKey] = useState(false);
-  const [apiKeyStatus, setApiKeyStatus] = useState<"configured" | "missing">("missing");
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
@@ -119,10 +119,15 @@ function SettingsComponent() {
     const stored = localStorage.getItem(STORAGE_KEY) ?? "";
     setUsername(stored);
     setSettings(loadSettings());
-
-    const hasApiKey = !!import.meta.env.VITE_API_KEY_CONFIGURED;
-    setApiKeyStatus(hasApiKey ? "configured" : "missing");
   }, []);
+
+  const fetchApiStatus = useServerFn(getGroqApiStatus);
+  const apiStatusQ = useQuery({
+    queryKey: ["groq-api-status"],
+    queryFn: () => fetchApiStatus(),
+    staleTime: 1000 * 60 * 5,
+    retry: 0,
+  });
 
   const fetchProfile = useServerFn(fetchLeetCodeProfile);
   const profileQ = useQuery<LCProfile>({
@@ -243,7 +248,7 @@ function SettingsComponent() {
             {activeTab === "account" && (
               <AccountTab
                 username={username}
-                apiKeyStatus={apiKeyStatus}
+                apiKeyStatus={apiStatusQ.data ?? "missing"}
                 showApiKey={showApiKey}
                 setShowApiKey={setShowApiKey}
                 settings={settings}
@@ -570,12 +575,12 @@ function AccountTab({
 
             <div className="bg-white/5 border border-white/10 rounded-lg p-4 mb-4">
               <p className="text-xs text-muted-foreground font-mono mb-2 font-sans">Environment Variable:</p>
-              <p className="font-mono text-sm break-words">GEMINI_API_KEY</p>
+              <p className="font-mono text-sm break-words">GROQ_API_KEY</p>
             </div>
 
             <div className="text-sm text-muted-foreground font-sans space-y-2">
               <p>
-                🤖 <strong>Gemini API</strong> is used for:
+                🤖 <strong>Groq API</strong> is used for:
               </p>
               <ul className="list-disc list-inside space-y-1 ml-2">
                 <li>AI-powered next problem recommendations</li>
@@ -803,7 +808,7 @@ function AboutTab() {
     { name: "TanStack Router", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
     { name: "TanStack Query", color: "bg-red-500/20 text-red-400 border-red-500/30" },
     { name: "TanStack Start", color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
-    { name: "Gemini AI", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+    { name: "Groq AI", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
     { name: "Sonner", color: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" },
     { name: "Lucide Icons", color: "bg-pink-500/20 text-pink-400 border-pink-500/30" },
     { name: "Zod", color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
@@ -906,12 +911,12 @@ function AboutTab() {
               <ExternalLink className="size-3" />
             </a>
             <a
-              href="https://ai.google.dev"
+              href="https://console.groq.com/docs/quickstart"
               target="_blank"
               rel="noreferrer"
               className="px-5 py-2.5 bg-purple-500/10 border border-purple-500/20 rounded-lg font-display text-sm font-bold tracking-wide text-purple-400 hover:bg-purple-500/20 cursor-glow transition-all flex items-center gap-2"
             >
-              Gemini API
+              Groq API
               <ExternalLink className="size-3" />
             </a>
           </div>

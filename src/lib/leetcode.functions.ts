@@ -46,22 +46,30 @@ export interface LCProfile {
 
 function computeStreak(cal: Record<string, number>): number {
   if (!cal || Object.keys(cal).length === 0) return 0;
+  // Normalise every submission timestamp to a UTC date string
   const days = new Set(
     Object.keys(cal).map((s) => {
-      const d = new Date(Number(s) * 1000);
-      return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+      const ms = Number(s) * 1000;
+      const d = new Date(ms);
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
     }),
   );
   let streak = 0;
-  const today = new Date();
-  // allow starting from today or yesterday
+  // Walk backwards from today (UTC). Give grace for today — streak can
+  // start from yesterday if nothing solved yet today.
+  const nowUtcMs = Date.now();
   for (let i = 0; i < 400; i++) {
-    const d = new Date(today);
-    d.setUTCDate(today.getUTCDate() - i);
-    const k = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
-    if (days.has(k)) streak++;
-    else if (i === 0) continue; // give grace for today
-    else break;
+    const dayMs = nowUtcMs - i * 86400_000;
+    const d = new Date(dayMs);
+    const k = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+    if (days.has(k)) {
+      streak++;
+    } else if (i === 0) {
+      // Grace: today not solved yet — keep going to check yesterday
+      continue;
+    } else {
+      break;
+    }
   }
   return streak;
 }
@@ -162,10 +170,75 @@ export const fetchLeetCodeProfile = createServerFn({ method: "POST" })
       },
       acceptanceRate: null,
       reputation: mu.profile?.reputation ?? null,
-      streak: Number(calMu.streak ?? computeStreak(cal)),
+      // Always compute streak locally from calendar data.
+      // calMu.streak from the API resets on LeetCode's US-Pacific timezone,
+      // which causes wrong values for users in other timezones (e.g. IST).
+      streak: computeStreak(cal) || Number(calMu.streak ?? 0),
       totalActiveDays: Number(calMu.totalActiveDays ?? 0),
       submissionCalendar: cal,
       recent: recentList,
       topTags,
     };
+  });
+
+export interface LCSubmissionDetail {
+  title: string;
+  titleSlug: string;
+  timestamp: number;
+  difficulty: "Easy" | "Medium" | "Hard";
+}
+
+export const fetchRecentSubmissionsWithDetails = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => usernameSchema.parse(d))
+  .handler(async ({ data }): Promise<LCSubmissionDetail[]> => {
+    const { username } = data;
+
+    const recentQuery = `
+      query recentAcSubmissions($username: String!, $limit: Int!) {
+        recentAcSubmissionList(username: $username, limit: $limit) {
+          title titleSlug timestamp
+        }
+      }`;
+
+    const res = await lcQuery(recentQuery, { username, limit: 20 });
+    const list = (res.recentAcSubmissionList ?? []) as Array<{
+      title: string;
+      titleSlug: string;
+      timestamp: number;
+    }>;
+
+    if (list.length === 0) return [];
+
+    // Get unique slugs
+    const uniqueSlugs = Array.from(new Set(list.map((s) => s.titleSlug)));
+
+    // Fetch difficulty for each unique slug
+    const diffQuery = `
+      query questionDifficulty($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
+          difficulty
+        }
+      }`;
+
+    const difficultiesMap: Record<string, "Easy" | "Medium" | "Hard"> = {};
+
+    await Promise.all(
+      uniqueSlugs.map(async (slug) => {
+        try {
+          const qRes = await lcQuery(diffQuery, { titleSlug: slug });
+          const diff = qRes.question ? (qRes.question as any).difficulty : "Medium";
+          difficultiesMap[slug] = (diff === "Easy" || diff === "Medium" || diff === "Hard") ? diff : "Medium";
+        } catch (err) {
+          console.error(`Error fetching difficulty for ${slug}:`, err);
+          difficultiesMap[slug] = "Medium"; // fallback
+        }
+      })
+    );
+
+    return list.map((item) => ({
+      title: item.title,
+      titleSlug: item.titleSlug,
+      timestamp: Number(item.timestamp),
+      difficulty: difficultiesMap[item.titleSlug] ?? "Medium",
+    }));
   });

@@ -142,7 +142,7 @@ function StreaksComponent() {
 
           {/* Stats */}
           <section className="lg:col-span-2">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <StatCard
                 label="Best Streak"
                 value={profile?.streak ?? 0}
@@ -154,6 +154,11 @@ function StreaksComponent() {
                 value={profile?.totalSolved ?? 0}
                 icon={TrendingUp}
                 color="text-neon"
+              />
+              <AvgTimeCard
+                totalSolved={profile?.totalSolved ?? 0}
+                activeDays={profile?.totalActiveDays ?? 0}
+                loading={profileQ.isLoading}
               />
             </div>
           </section>
@@ -302,6 +307,27 @@ function StatCard({
         {Icon && <Icon className={`size-5 ${color || "text-neon"}`} />}
       </div>
       <div className="text-4xl font-display font-bold">{value}</div>
+    </div>
+  );
+}
+
+/* ─── AvgTimeCard ─── */
+
+function AvgTimeCard({ totalSolved, activeDays, loading }: { totalSolved: number; activeDays: number; loading: boolean }) {
+  const avgPerDay = activeDays > 0 ? (totalSolved / activeDays).toFixed(2) : "0.00";
+
+  return (
+    <div className="p-6 bg-card border border-white/10 rounded-lg cursor-glow hover:border-neon transition-all">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground font-sans">
+          Avg Per Day
+        </h3>
+        <Clock className="size-5 text-neon" />
+      </div>
+      <div className="text-4xl font-display font-bold">{loading ? "—" : avgPerDay}</div>
+      <p className="text-xs text-muted-foreground font-sans mt-2">
+        {loading ? "—" : `${totalSolved} total / ${activeDays} days`}
+      </p>
     </div>
   );
 }

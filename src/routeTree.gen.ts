@@ -9,11 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TimeAnalyticsRouteImport } from './routes/time-analytics'
 import { Route as StreaksRouteImport } from './routes/streaks'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AiModeRouteImport } from './routes/ai-mode'
 import { Route as IndexRouteImport } from './routes/index'
 
+const TimeAnalyticsRoute = TimeAnalyticsRouteImport.update({
+  id: '/time-analytics',
+  path: '/time-analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StreaksRoute = StreaksRouteImport.update({
   id: '/streaks',
   path: '/streaks',
@@ -40,12 +46,14 @@ export interface FileRoutesByFullPath {
   '/ai-mode': typeof AiModeRoute
   '/settings': typeof SettingsRoute
   '/streaks': typeof StreaksRoute
+  '/time-analytics': typeof TimeAnalyticsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ai-mode': typeof AiModeRoute
   '/settings': typeof SettingsRoute
   '/streaks': typeof StreaksRoute
+  '/time-analytics': typeof TimeAnalyticsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,20 @@ export interface FileRoutesById {
   '/ai-mode': typeof AiModeRoute
   '/settings': typeof SettingsRoute
   '/streaks': typeof StreaksRoute
+  '/time-analytics': typeof TimeAnalyticsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/ai-mode' | '/settings' | '/streaks'
+  fullPaths: '/' | '/ai-mode' | '/settings' | '/streaks' | '/time-analytics'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/ai-mode' | '/settings' | '/streaks'
-  id: '__root__' | '/' | '/ai-mode' | '/settings' | '/streaks'
+  to: '/' | '/ai-mode' | '/settings' | '/streaks' | '/time-analytics'
+  id:
+    | '__root__'
+    | '/'
+    | '/ai-mode'
+    | '/settings'
+    | '/streaks'
+    | '/time-analytics'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,10 +82,18 @@ export interface RootRouteChildren {
   AiModeRoute: typeof AiModeRoute
   SettingsRoute: typeof SettingsRoute
   StreaksRoute: typeof StreaksRoute
+  TimeAnalyticsRoute: typeof TimeAnalyticsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/time-analytics': {
+      id: '/time-analytics'
+      path: '/time-analytics'
+      fullPath: '/time-analytics'
+      preLoaderRoute: typeof TimeAnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/streaks': {
       id: '/streaks'
       path: '/streaks'
@@ -107,6 +130,7 @@ const rootRouteChildren: RootRouteChildren = {
   AiModeRoute: AiModeRoute,
   SettingsRoute: SettingsRoute,
   StreaksRoute: StreaksRoute,
+  TimeAnalyticsRoute: TimeAnalyticsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

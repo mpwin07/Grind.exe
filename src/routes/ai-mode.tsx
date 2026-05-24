@@ -18,12 +18,16 @@ import {
   Sparkles,
   ShieldAlert,
   ShieldCheck,
+  Copy,
+  Check,
+  Code2,
 } from "lucide-react";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { UsernameDialog } from "@/components/UsernameDialog";
+import { createGroqChatCompletion } from "@/lib/groq.functions";
 import { fetchLeetCodeProfile, type LCProfile } from "@/lib/leetcode.functions";
 
 export const Route = createFileRoute("/ai-mode")({
@@ -44,6 +48,8 @@ const searchSchema = z.object({
   username: z.string().min(1).max(64),
   totalSolved: z.number().optional(),
   topTags: z.array(z.string()).optional(),
+  // Slugs of problems the user has already solved — AI will exclude them
+  solvedSlugs: z.array(z.string()).optional(),
 });
 
 interface SearchResult {
@@ -56,81 +62,246 @@ interface SearchResult {
   description: string;
 }
 
+type SessionSearch = {
+  username: string;
+  topic: string;
+  results: SearchResult[];
+};
+
 export const searchProblems = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => searchSchema.parse(d))
   .handler(async ({ data }): Promise<SearchResult[]> => {
     try {
-      const key = process.env.GEMINI_API_KEY;
-      if (!key) throw new Error("API key not configured");
+      const alreadySolved = data.solvedSlugs?.length
+        ? `\n      IMPORTANT — The user has ALREADY solved these problems. Do NOT include any of them:\n      ${data.solvedSlugs.join(", ")}`
+        : "";
 
-      const prompt = `User is learning about "${data.topic}" in LeetCode. Find and recommend exactly 9 real LeetCode problems that cover this topic: 3 Easy, 3 Medium, and 3 Hard.
+      const prompt = `User is learning about "${data.topic}" in LeetCode. Find and recommend exactly 9 DIFFERENT real LeetCode problems that cover this topic: 3 Easy, 3 Medium, and 3 Hard. Pick a varied selection each time — do not always pick the most popular ones.${alreadySolved}
       
       User's current skill:
       - Total solved: ${data.totalSolved}
       - Top tags: ${data.topTags?.join(", ")}
       
-      For each problem, provide:
-      - title: exact problem title
-      - slug: exact URL slug
-      - difficulty: Easy, Medium, or Hard
-      - topicTags: array of 1-3 relevant tags
-      - successRate: estimated success rate as number 0-100
-      - description: 1-2 sentence explanation of why this problem is good for learning "${data.topic}"
+      For each problem, return a JSON object with EXACTLY these fields:
+      - title: exact LeetCode problem title (string)
+      - titleSlug: exact URL slug used in leetcode.com/problems/<titleSlug>/ (string)
+      - difficulty: "Easy", "Medium", or "Hard" (string)
+      - topicTags: array of 1-3 relevant tag strings
+      - successRate: estimated acceptance rate as a number 0-100 (number)
+      - description: 1-2 sentence explanation of why this problem is good for learning "${data.topic}" (string)
 
-      Focus on problems that directly teach the "${data.topic}" concept. Only return valid, real LeetCode problems.`;
+      Focus on problems that directly teach the "${data.topic}" concept. Only return valid, real LeetCode problems that exist on leetcode.com.`;
 
-      const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent", {
-        method: "POST",
-        headers: {
-          "x-goog-api-key": key,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: "You are a LeetCode expert. Return ONLY valid JSON array with exactly 9 real LeetCode problems. No markdown, no code blocks, just raw JSON." }]
+      const json = await createGroqChatCompletion({
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a LeetCode expert. Return ONLY a valid JSON array with exactly 9 real LeetCode problems. Each object MUST have: title, titleSlug, difficulty, topicTags, successRate, description. No markdown, no code blocks, just raw JSON array.",
           },
-          contents: [
-            { role: "user", parts: [{ text: prompt }] }
-          ],
-          generationConfig: {
-            temperature: 0.7
-          }
-        }),
+          { role: "user", content: prompt },
+        ],
+        temperature: 1.0,
       });
 
-      if (res.status === 429) throw new Error("Rate limit reached. Try again in a moment.");
-      if (res.status === 402) throw new Error("API credits exhausted.");
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error("Gemini Error Body:", errText);
-        throw new Error(`API error: ${res.status}: ${errText}`);
-      }
-
-      const json = (await res.json()) as any;
-      const content = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      const content = json.choices?.[0]?.message?.content;
       if (!content) throw new Error("No response from AI");
 
+      let parsed: SearchResult[];
       try {
         let results = JSON.parse(content);
-        if (!Array.isArray(results)) {
-          throw new Error("Expected array");
-        }
-        return results.slice(0, 9);
-      } catch (e) {
+        if (!Array.isArray(results)) throw new Error("Expected array");
+        parsed = results;
+      } catch {
         const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0]).slice(0, 9);
-        }
-        throw e;
+        if (!jsonMatch) throw new Error("Could not parse AI response as JSON");
+        parsed = JSON.parse(jsonMatch[0]);
       }
+
+      // Normalise: AI sometimes returns 'slug' instead of 'titleSlug'
+      const normalised = parsed.map((p: any, i: number) => ({
+        questionId: p.questionId ?? p.frontendId ?? i + 1,
+        title: String(p.title ?? ""),
+        titleSlug: String(p.titleSlug ?? p.slug ?? ""),
+        difficulty: p.difficulty as "Easy" | "Medium" | "Hard",
+        topicTags: Array.isArray(p.topicTags) ? p.topicTags.map(String) : [],
+        successRate: Number(p.successRate ?? p.acRate ?? 50),
+        description: String(p.description ?? ""),
+      }));
+
+      // Remove any problems the user already solved (double-check client hint)
+      const solved = new Set((data.solvedSlugs ?? []).map((s) => s.toLowerCase()));
+      return normalised
+        .filter((p) => p.titleSlug && !solved.has(p.titleSlug.toLowerCase()))
+        .slice(0, 9);
     } catch (error) {
       console.error("AI Mode Error:", error);
       throw error;
     }
   });
 
+interface SolutionResponse {
+  bruteForce: string;
+  optimized: string;
+}
+
+const solutionSchema = z.object({
+  title: z.string().min(1),
+  slug: z.string().min(1),
+  language: z.enum(["java", "python", "cpp", "javascript", "typescript", "go", "rust"]),
+});
+
+export const getSolution = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => solutionSchema.parse(d))
+  .handler(async ({ data }): Promise<SolutionResponse> => {
+    try {
+      const prompt = `Provide two solutions for the LeetCode problem "${data.title}" (leetcode.com/problems/${data.slug}/) in ${data.language.toUpperCase()}.
+
+Return a JSON object with exactly these two fields:
+- "bruteForce": a string containing the complete brute-force solution code
+- "optimized": a string containing the complete optimized solution code
+
+CRITICAL FORMATTING RULES:
+- Each line of code MUST be separated by a real newline character (\n) inside the JSON string.
+- Use proper indentation (spaces, not tabs).
+- Include helpful comments explaining the approach.
+- Do NOT put all code on one line.
+- The code must be well-formatted, readable, and production-ready.
+
+Example of correct JSON format:
+{"bruteForce": "import java.util.*;\n\nclass Solution {\n    public int[] solve(int[] nums) {\n        // brute force approach\n        return nums;\n    }\n}", "optimized": "..."}`;
+
+      const json = await createGroqChatCompletion({
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an expert LeetCode solutions provider. Return ONLY a valid JSON object with \"bruteForce\" and \"optimized\" fields. Each field is a string containing properly formatted, multi-line code. Use \\n for newlines inside JSON strings. No markdown, no code blocks, no extra text — just raw JSON.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.7,
+      });
+
+      const content = json.choices?.[0]?.message?.content;
+      if (!content) throw new Error("No response from AI");
+
+      // The AI often returns raw newlines/tabs inside JSON string values,
+      // which is invalid JSON. Fix by escaping control chars only inside strings.
+      function sanitizeJsonResponse(raw: string): string {
+        let result = "";
+        let inString = false;
+        let escape = false;
+        for (let i = 0; i < raw.length; i++) {
+          const ch = raw[i]!;
+          if (escape) {
+            result += ch;
+            escape = false;
+            continue;
+          }
+          if (ch === "\\" && inString) {
+            result += ch;
+            escape = true;
+            continue;
+          }
+          if (ch === '"') {
+            inString = !inString;
+            result += ch;
+            continue;
+          }
+          if (inString) {
+            if (ch === "\n") { result += "\\n"; continue; }
+            if (ch === "\r") { result += "\\r"; continue; }
+            if (ch === "\t") { result += "\\t"; continue; }
+          }
+          result += ch;
+        }
+        return result;
+      }
+
+      let parsed: SolutionResponse;
+      try {
+        parsed = JSON.parse(sanitizeJsonResponse(content));
+      } catch {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("Could not parse AI response as JSON");
+        parsed = JSON.parse(sanitizeJsonResponse(jsonMatch[0]));
+      }
+
+      // Normalise: collapse any remaining escaped sequences
+      const normCode = (s: string) =>
+        s
+          .replace(/\\n/g, "\n")
+          .replace(/\\t/g, "  ")
+          .replace(/\\r/g, "")
+          .trim();
+
+      return {
+        bruteForce: normCode(String(parsed.bruteForce || "")),
+        optimized: normCode(String(parsed.optimized || "")),
+      };
+    } catch (error) {
+      console.error("Solution Fetch Error:", error);
+      throw error;
+    }
+  });
+
 const STORAGE_KEY = "lc:username";
 const RECENT_SEARCHES_KEY = "lc:recent-searches";
+const SESSION_SEARCH_KEY = "lc:ai-mode:session-search";
+const SESSION_TOPIC_KEY = "lc:ai-mode:last-topic";
+
+function getSessionSearch(username: string): SessionSearch | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = sessionStorage.getItem(SESSION_SEARCH_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<SessionSearch>;
+    if (
+      parsed.username !== username ||
+      typeof parsed.topic !== "string" ||
+      !Array.isArray(parsed.results)
+    ) {
+      return null;
+    }
+    return {
+      username: parsed.username,
+      topic: parsed.topic,
+      results: parsed.results as SearchResult[],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveSessionSearch(search: SessionSearch) {
+  if (typeof window === "undefined") return;
+  saveSessionTopic(search.username, search.topic);
+  sessionStorage.setItem(SESSION_SEARCH_KEY, JSON.stringify(search));
+}
+
+function getSessionTopic(username: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const stored = sessionStorage.getItem(SESSION_TOPIC_KEY);
+    if (!stored) return "";
+    const parsed = JSON.parse(stored) as { username?: string; topic?: string };
+    return parsed.username === username && typeof parsed.topic === "string" ? parsed.topic : "";
+  } catch {
+    return "";
+  }
+}
+
+function saveSessionTopic(username: string, topic: string) {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(SESSION_TOPIC_KEY, JSON.stringify({ username, topic }));
+}
+
+function clearSessionSearch() {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(SESSION_SEARCH_KEY);
+  sessionStorage.removeItem(SESSION_TOPIC_KEY);
+}
 
 function getRecentSearches(): string[] {
   if (typeof window === "undefined") return [];
@@ -161,15 +332,34 @@ function AIModeComponent() {
   const [username, setUsername] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [searchTopic, setSearchTopic] = useState("");
+  const [submittedTopic, setSubmittedTopic] = useState("");
+  const [sessionSearch, setSessionSearch] = useState<SessionSearch | null>(null);
   const [active] = useState("ai-mode");
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  // Incremented on every explicit search so the same topic always hits the AI fresh
+  const [searchCounter, setSearchCounter] = useState(0);
 
   // Get stored username
   useEffect(() => {
     if (typeof window === "undefined") return;
     const stored = localStorage.getItem(STORAGE_KEY) ?? "";
-    if (stored) setUsername(stored);
-    else setDialogOpen(true);
+    if (stored) {
+      setUsername(stored);
+      const savedSearch = getSessionSearch(stored);
+      if (savedSearch) {
+        setSearchTopic(savedSearch.topic);
+        setSubmittedTopic(savedSearch.topic);
+        setSessionSearch(savedSearch);
+      } else {
+        const savedTopic = getSessionTopic(stored);
+        if (savedTopic) {
+          setSearchTopic(savedTopic);
+          setSubmittedTopic(savedTopic);
+        }
+      }
+    } else {
+      setDialogOpen(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -186,33 +376,62 @@ function AIModeComponent() {
   });
 
   const search = useServerFn(searchProblems);
+  // Build the set of already-solved problem slugs from recent submissions
+  const solvedSlugs = useMemo(
+    () => profileQ.data?.recent.map((r) => r.titleSlug) ?? [],
+    [profileQ.data]
+  );
   const searchQ = useQuery<SearchResult[]>({
-    queryKey: ["search-problems", searchTopic, username],
-    queryFn: () => search({ data: { 
-      topic: searchTopic, 
-      username,
-      totalSolved: profileQ.data?.totalSolved ?? 0,
-      topTags: profileQ.data?.topTags.map(t => t.tagName) ?? []
-    } }),
-    enabled: !!searchTopic && !!username,
-    staleTime: 1000 * 60 * 10,
+    // searchCounter is bumped on every submit so the same topic always re-fetches
+    queryKey: ["search-problems", submittedTopic, username, searchCounter],
+    queryFn: () =>
+      search({
+        data: {
+          topic: submittedTopic,
+          username,
+          totalSolved: profileQ.data?.totalSolved ?? 0,
+          topTags: profileQ.data?.topTags.map((t) => t.tagName) ?? [],
+          solvedSlugs,
+        },
+      }),
+    enabled: !!submittedTopic && !!username && searchCounter > 0,
+    staleTime: Infinity,
+    gcTime: Infinity,
     retry: 1,
   });
 
+  useEffect(() => {
+    if (!username || !submittedTopic || !searchQ.data) return;
+    const next = { username, topic: submittedTopic, results: searchQ.data };
+    setSessionSearch(next);
+    saveSessionSearch(next);
+  }, [searchQ.data, submittedTopic, username]);
+
+  const displayedResults =
+    searchQ.data ?? (sessionSearch?.topic === submittedTopic ? sessionSearch.results : undefined);
+  const displayedTopic = displayedResults ? submittedTopic : "";
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchTopic.trim()) {
-      saveRecentSearch(searchTopic.trim());
+    const topic = searchTopic.trim();
+    if (topic) {
+      setSearchTopic(topic);
+      setSubmittedTopic(topic);
+      saveSessionTopic(username, topic);
+      saveRecentSearch(topic);
       setRecentSearches(getRecentSearches());
-      searchQ.refetch();
+      // Bump counter — causes a new query key so the AI is always called fresh
+      setSearchCounter((c) => c + 1);
     }
   };
 
   const handleRecentClick = (topic: string) => {
     setSearchTopic(topic);
+    setSubmittedTopic(topic);
+    saveSessionTopic(username, topic);
     saveRecentSearch(topic);
     setRecentSearches(getRecentSearches());
-    setTimeout(() => searchQ.refetch(), 100);
+    setSearchCounter((c) => c + 1);
   };
 
   const handleRemoveRecent = (topic: string) => {
@@ -221,6 +440,12 @@ function AIModeComponent() {
   };
 
   const saveUsername = (u: string) => {
+    if (u !== username) {
+      clearSessionSearch();
+      setSearchTopic("");
+      setSubmittedTopic("");
+      setSessionSearch(null);
+    }
     localStorage.setItem(STORAGE_KEY, u);
     setUsername(u);
     setDialogOpen(false);
@@ -334,16 +559,16 @@ function AIModeComponent() {
           )}
 
           {/* Section 3: Problem Stats Cards */}
-          {searchQ.data && searchQ.data.length > 0 && (
-            <ProblemStatsCards results={searchQ.data} />
+          {displayedResults && displayedResults.length > 0 && (
+            <ProblemStatsCards results={displayedResults} />
           )}
 
-          {searchQ.data && searchQ.data.length > 0 && (
+          {displayedResults && displayedResults.length > 0 && (
             <div className="space-y-4">
               <h3 className="font-display text-lg font-bold mb-6">
-                Found {searchQ.data.length} problems for "{searchTopic}"
+                Found {displayedResults.length} problems for "{displayedTopic}"
               </h3>
-              {searchQ.data.map((problem) => (
+              {displayedResults.map((problem) => (
                 <ProblemCard
                   key={problem.questionId}
                   problem={problem}
@@ -353,36 +578,36 @@ function AIModeComponent() {
             </div>
           )}
 
-          {searchQ.data && searchQ.data.length === 0 && (
+          {displayedResults && displayedResults.length === 0 && !searchQ.isLoading && (
             <div className="text-center py-12">
               <p className="text-muted-foreground font-sans">No problems found. Try a different topic.</p>
             </div>
           )}
 
           {/* Section 2: Difficulty Progression */}
-          {searchQ.data && searchQ.data.length > 0 && (
+          {displayedResults && displayedResults.length > 0 && (
             <section className="mt-12">
               <h2 className="font-display text-2xl font-bold mb-6 flex items-center gap-2">
                 <TrendingUp className="size-6 text-neon" />
                 Suggested Learning Path
               </h2>
-              <DifficultyProgression results={searchQ.data} />
+              <DifficultyProgression results={displayedResults} />
             </section>
           )}
 
           {/* Section 4: Study Plan Generator */}
-          {searchQ.data && searchQ.data.length > 0 && (
+          {displayedResults && displayedResults.length > 0 && (
             <section className="mt-12">
               <h2 className="font-display text-2xl font-bold mb-6 flex items-center gap-2">
                 <CalendarDays className="size-6 text-neon" />
                 7-Day Study Plan
               </h2>
-              <StudyPlanGenerator results={searchQ.data} />
+              <StudyPlanGenerator results={displayedResults} />
             </section>
           )}
 
           {/* Section 6: Topic Suggestions with Mastery Indicator */}
-          {!searchTopic && (
+          {!searchTopic && !displayedResults && (
             <div className="text-center py-16">
               <p className="text-muted-foreground font-sans text-lg mb-4">
                 Enter a topic to find relevant LeetCode problems
@@ -397,9 +622,11 @@ function AIModeComponent() {
                       key={topic}
                       onClick={() => {
                         setSearchTopic(topic);
+                        setSubmittedTopic(topic);
+                        saveSessionTopic(username, topic);
                         saveRecentSearch(topic);
                         setRecentSearches(getRecentSearches());
-                        setTimeout(() => searchQ.refetch(), 100);
+                        setSearchCounter((c) => c + 1);
                       }}
                       className="relative px-4 py-3 bg-white/5 border border-white/10 rounded-lg hover:border-neon hover:bg-white/10 cursor-glow transition-all font-sans text-sm"
                     >
@@ -994,12 +1221,69 @@ function ProblemCard({
   problem: SearchResult;
   topTags?: Array<{ tagName: string; problemsSolved: number }>;
 }) {
+  const [showSolution, setShowSolution] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState<"java" | "python" | "cpp" | "javascript" | "typescript" | "go" | "rust">("java");
+  const [solutionLoading, setSolutionLoading] = useState(false);
+  const [solution, setSolution] = useState<SolutionResponse | null>(null);
+  const [solutionLanguage, setSolutionLanguage] = useState<string | null>(null);
+
+  const fetchSolutionFn = useServerFn(getSolution);
+
+  const handleFetchSolution = async (lang?: typeof selectedLanguage) => {
+    const targetLang = lang ?? selectedLanguage;
+    setSolutionLoading(true);
+    try {
+      const result = await fetchSolutionFn({
+        data: {
+          title: problem.title,
+          slug: problem.titleSlug,
+          language: targetLang,
+        },
+      });
+      setSolution(result);
+      setSolutionLanguage(targetLang);
+    } catch (error) {
+      toast.error(`Failed to fetch solution: ${(error as Error).message}`);
+    } finally {
+      setSolutionLoading(false);
+    }
+  };
+
+  const handleLanguageChange = (lang: typeof selectedLanguage) => {
+    setSelectedLanguage(lang);
+    // If a solution was already loaded or the panel is open, auto-refetch
+    if (showSolution) {
+      setSolution(null);
+      handleFetchSolution(lang);
+    }
+  };
+
   const difficultyColor =
     problem.difficulty === "Hard"
       ? "bg-red-500/20 text-red-400"
       : problem.difficulty === "Medium"
         ? "bg-yellow-500/20 text-yellow-400"
         : "bg-emerald-500/20 text-emerald-400";
+
+  const languageLabels: Record<string, string> = {
+    java: "Java",
+    python: "Python",
+    cpp: "C++",
+    javascript: "JavaScript",
+    typescript: "TypeScript",
+    go: "Go",
+    rust: "Rust",
+  };
+
+  const languageHighlight: Record<string, string> = {
+    java: "text-orange-400",
+    python: "text-sky-400",
+    cpp: "text-blue-400",
+    javascript: "text-yellow-400",
+    typescript: "text-blue-300",
+    go: "text-cyan-400",
+    rust: "text-red-400",
+  };
 
   return (
     <div className="p-6 bg-card border border-white/10 rounded-lg hover:border-neon cursor-glow transition-all group">
@@ -1047,14 +1331,150 @@ function ProblemCard({
             <span>Success Rate: <span className="text-neon font-semibold">{problem.successRate}%</span></span>
           </div>
         </div>
-        <a
-          href={`https://leetcode.com/problems/${problem.titleSlug}/`}
-          target="_blank"
-          rel="noreferrer"
-          className="px-6 py-3 bg-primary text-primary-foreground font-display text-sm font-bold tracking-wide rounded-lg hover:bg-primary/90 transition-all flex items-center gap-2 shrink-0 cursor-glow"
+        <div className="flex flex-col gap-2 shrink-0">
+          <a
+            href={`https://leetcode.com/problems/${problem.titleSlug}/`}
+            target="_blank"
+            rel="noreferrer"
+            className="px-6 py-3 bg-primary text-primary-foreground font-display text-sm font-bold tracking-wide rounded-lg hover:bg-primary/90 transition-all flex items-center gap-2 cursor-glow"
+          >
+            Solve <ExternalLink className="size-4" />
+          </a>
+          <button
+            onClick={() => {
+              setShowSolution(!showSolution);
+              if (!showSolution && !solution) {
+                handleFetchSolution();
+              }
+            }}
+            className="px-6 py-3 border border-white/10 font-display text-sm font-bold tracking-wide rounded-lg hover:border-neon hover:text-neon transition-all cursor-glow flex items-center gap-2"
+          >
+            {solutionLoading ? (
+              <>
+                <Loader className="size-3.5 animate-spin" />
+                Loading…
+              </>
+            ) : showSolution ? (
+              "Hide Solution"
+            ) : (
+              "Solution"
+            )}
+          </button>
+          {/* Language dropdown — always visible */}
+          <select
+            value={selectedLanguage}
+            onChange={(e) => handleLanguageChange(e.target.value as typeof selectedLanguage)}
+            className="px-3 py-2 bg-card border border-white/10 rounded-lg text-xs font-sans focus:outline-none focus:border-neon cursor-glow transition-all"
+          >
+            <option value="java">Java</option>
+            <option value="python">Python</option>
+            <option value="cpp">C++</option>
+            <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
+            <option value="go">Go</option>
+            <option value="rust">Rust</option>
+          </select>
+        </div>
+      </div>
+
+      {showSolution && (
+        <div className="mt-6 pt-6 border-t border-white/10">
+          {solutionLoading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader className="size-5 animate-spin mr-3" />
+              <span className="font-sans">Generating {languageLabels[selectedLanguage]} solutions…</span>
+            </div>
+          ) : solution ? (() => {
+            const areSame = solution.bruteForce.trim() === solution.optimized.trim();
+            const langLabel = languageLabels[solutionLanguage ?? selectedLanguage] ?? selectedLanguage;
+            return (
+              <div className="max-w-3xl mx-auto space-y-8">
+                {/* Optimized Solution (always shown first) */}
+                <div>
+                  <h4 className="font-display text-sm font-bold mb-4 text-emerald-400 uppercase flex items-center gap-2">
+                    <ShieldCheck className="size-4" />
+                    {areSame ? "Solution" : "Optimized Approach"}
+                  </h4>
+                  <SolutionCodeBlock code={solution.optimized} language={langLabel} />
+                </div>
+
+                {/* Brute Force Solution (hidden if same as optimized) */}
+                {!areSame && (
+                  <div>
+                    <h4 className="font-display text-sm font-bold mb-4 text-orange-400 uppercase flex items-center gap-2">
+                      <ShieldAlert className="size-4" />
+                      Brute Force Approach
+                    </h4>
+                    <SolutionCodeBlock code={solution.bruteForce} language={langLabel} />
+                  </div>
+                )}
+              </div>
+            );
+          })() : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Solution Code Block (with header + copy button) ─── */
+function SolutionCodeBlock({ code, language }: { code: string; language: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      toast.success("Copied to clipboard!");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = code;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      toast.success("Copied to clipboard!");
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="rounded-xl overflow-hidden border border-white/[0.08] bg-[#0c0c15] shadow-lg shadow-black/30">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-5 py-3 bg-white/[0.025] border-b border-white/[0.08]">
+        <div className="flex items-center gap-2.5">
+          <Code2 className="size-4 text-white/40" />
+          <span className="font-sans text-sm font-semibold text-white/70 tracking-wide">{language}</span>
+        </div>
+        <button
+          onClick={handleCopy}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all duration-200 ${
+            copied
+              ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30"
+              : "bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/80 ring-1 ring-white/[0.06]"
+          }`}
+          title="Copy to clipboard"
         >
-          Solve <ExternalLink className="size-4" />
-        </a>
+          {copied ? (
+            <>
+              <Check className="size-3.5" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="size-3.5" />
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+      {/* Code body */}
+      <div className="px-6 py-5 overflow-x-auto max-h-[600px] overflow-y-auto">
+        <pre className="font-mono text-[13px] leading-[1.75] text-white/85 whitespace-pre m-0">{code}</pre>
       </div>
     </div>
   );
