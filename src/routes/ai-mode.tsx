@@ -113,7 +113,8 @@ export const searchProblems = createServerFn({ method: "POST" })
         if (!Array.isArray(results)) throw new Error("Expected array");
         parsed = results;
       } catch {
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        // Use non-greedy match to avoid capturing extra content
+        const jsonMatch = content.match(/\[[\s\S]*?\]/);
         if (!jsonMatch) throw new Error("Could not parse AI response as JSON");
         parsed = JSON.parse(jsonMatch[0]);
       }
@@ -189,32 +190,66 @@ Example of correct JSON format:
       // The AI often returns raw newlines/tabs inside JSON string values,
       // which is invalid JSON. Fix by escaping control chars only inside strings.
       function sanitizeJsonResponse(raw: string): string {
+        // Extract just the JSON object, ignoring markdown or other text
+        let jsonStr = raw;
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) jsonStr = match[0];
+
         let result = "";
-        let inString = false;
-        let escape = false;
-        for (let i = 0; i < raw.length; i++) {
-          const ch = raw[i]!;
-          if (escape) {
-            result += ch;
-            escape = false;
-            continue;
-          }
-          if (ch === "\\" && inString) {
-            result += ch;
-            escape = true;
-            continue;
-          }
+        let i = 0;
+        while (i < jsonStr.length) {
+          const ch = jsonStr[i];
+
+          // Handle string literals
           if (ch === '"') {
-            inString = !inString;
             result += ch;
-            continue;
+            i++;
+
+            // Process contents of the string
+            while (i < jsonStr.length) {
+              const c = jsonStr[i];
+
+              if (c === "\\") {
+                // Already escaped character
+                result += c;
+                i++;
+                if (i < jsonStr.length) {
+                  result += jsonStr[i];
+                  i++;
+                }
+                continue;
+              }
+
+              if (c === '"') {
+                // End of string
+                result += c;
+                i++;
+                break;
+              }
+
+              // Escape special characters
+              if (c === "\n") {
+                result += "\\n";
+              } else if (c === "\r") {
+                result += "\\r";
+              } else if (c === "\t") {
+                result += "\\t";
+              } else if (c === "\b") {
+                result += "\\b";
+              } else if (c === "\f") {
+                result += "\\f";
+              } else if (c.charCodeAt(0) < 32) {
+                // Escape other control characters
+                result += "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
+              } else {
+                result += c;
+              }
+              i++;
+            }
+          } else {
+            result += ch;
+            i++;
           }
-          if (inString) {
-            if (ch === "\n") { result += "\\n"; continue; }
-            if (ch === "\r") { result += "\\r"; continue; }
-            if (ch === "\t") { result += "\\t"; continue; }
-          }
-          result += ch;
         }
         return result;
       }
@@ -223,7 +258,8 @@ Example of correct JSON format:
       try {
         parsed = JSON.parse(sanitizeJsonResponse(content));
       } catch {
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        // Use non-greedy match to avoid capturing code braces
+        const jsonMatch = content.match(/\{[\s\S]*?\}/);
         if (!jsonMatch) throw new Error("Could not parse AI response as JSON");
         parsed = JSON.parse(sanitizeJsonResponse(jsonMatch[0]));
       }
