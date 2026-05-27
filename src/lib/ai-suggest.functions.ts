@@ -10,8 +10,9 @@ const inputSchema = z.object({
   mediumSolved: z.number().int().nonnegative(),
   hardSolved: z.number().int().nonnegative(),
   streak: z.number().int().nonnegative(),
-  recentTitles: z.array(z.string()).max(10),
+  recentTitles: z.array(z.string()).max(20),
   topTags: z.array(z.string()).max(8),
+  skipTitles: z.array(z.string()).max(20).optional(),
 });
 
 export interface AISuggestion {
@@ -33,13 +34,22 @@ export const suggestNextProblem = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => inputSchema.parse(d))
   .handler(async ({ data }): Promise<AISuggestion> => {
     try {
+      const allExcluded = [
+        ...(data.recentTitles ?? []),
+        ...(data.skipTitles ?? []),
+      ];
+      const excludeList = [...new Set(allExcluded)].slice(0, 30);
+
       const prompt = `LeetCode user "${data.username}" stats:
 - Total solved: ${data.totalSolved} (Easy ${data.easySolved}, Medium ${data.mediumSolved}, Hard ${data.hardSolved})
 - Current streak: ${data.streak} days
 - Top topics: ${data.topTags?.join(", ") || "none yet"}
 - Recent solves: ${data.recentTitles?.slice(0, 6).join(", ") || "none yet"}
 
-Suggest ONE specific real LeetCode problem to solve next that will most improve their skills. Pick a real problem (use the canonical title and slug from leetcode.com).`;
+IMPORTANT: Do NOT suggest any of these problems (already solved or previously suggested):
+${excludeList.map(t => `- ${t}`).join("\n")}
+
+Suggest ONE specific real LeetCode problem to solve next that will most improve their skills. The problem MUST be different from all the ones listed above. Pick a real problem (use the canonical title and slug from leetcode.com).`;
 
       const tools: GroqTool[] = [
         {

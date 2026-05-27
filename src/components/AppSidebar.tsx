@@ -25,8 +25,8 @@ export function AppSidebar({
 
   return (
     <nav className="fixed left-0 top-0 h-screen w-20 border-r border-white/10 bg-night/60 backdrop-blur-xl flex flex-col items-center py-6 gap-8 z-40">
-      <div className="size-10 rounded-lg shadow-neon flex items-center justify-center font-display font-bold text-night overflow-hidden">
-        <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
+      <div className="w-14 h-8 rounded-lg shadow-neon flex items-center justify-center overflow-hidden bg-white/5">
+        <img src="/logo.png" alt="Logo" className="w-full h-full object-contain px-1" />
       </div>
 
       <div className="flex-1 flex flex-col gap-1 items-center">

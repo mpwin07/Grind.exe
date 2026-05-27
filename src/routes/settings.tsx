@@ -12,12 +12,11 @@ import {
   Zap,
   Check,
   ExternalLink,
-  Keyboard,
   Info,
   Sliders,
   User,
-  Shield,
   Github,
+  Linkedin,
   Trophy,
   Flame,
   Target,
@@ -32,8 +31,8 @@ import { useServerFn } from "@tanstack/react-start";
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { UsernameDialog } from "@/components/UsernameDialog";
-import { getGroqApiStatus } from "@/lib/groq.functions";
 import { fetchLeetCodeProfile, type LCProfile } from "@/lib/leetcode.functions";
+import { handleNotificationToggle } from "@/lib/notifications";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -111,7 +110,6 @@ function SettingsComponent() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [active] = useState("settings");
   const [activeTab, setActiveTab] = useState<TabId>("account");
-  const [showApiKey, setShowApiKey] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
@@ -120,14 +118,6 @@ function SettingsComponent() {
     setUsername(stored);
     setSettings(loadSettings());
   }, []);
-
-  const fetchApiStatus = useServerFn(getGroqApiStatus);
-  const apiStatusQ = useQuery({
-    queryKey: ["groq-api-status"],
-    queryFn: () => fetchApiStatus(),
-    staleTime: 1000 * 60 * 5,
-    retry: 0,
-  });
 
   const fetchProfile = useServerFn(fetchLeetCodeProfile);
   const profileQ = useQuery<LCProfile>({
@@ -146,18 +136,49 @@ function SettingsComponent() {
     setSettings((prev) => {
       const next = { ...prev, [key]: value };
       saveSettings(next);
-      
+
       if (key === "accentColor") {
         const colorObj = ACCENT_COLORS.find(c => c.id === value);
         if (colorObj) {
           document.documentElement.style.setProperty('--neon', colorObj.color);
           document.documentElement.style.setProperty('--neon-glow', colorObj.color);
+          document.documentElement.style.setProperty('--primary', colorObj.color);
+          document.documentElement.style.setProperty('--accent', colorObj.color);
+          document.documentElement.style.setProperty('--ring', colorObj.color);
         }
       }
-      
+
+      // Apply compact mode
+      if (key === "compactMode") {
+        if (value) {
+          document.documentElement.classList.add('compact-mode');
+        } else {
+          document.documentElement.classList.remove('compact-mode');
+        }
+      }
+
+      // Apply animations toggle
+      if (key === "animationsEnabled") {
+        if (value) {
+          document.documentElement.classList.remove('no-animations');
+        } else {
+          document.documentElement.classList.add('no-animations');
+        }
+      }
+
+      // Handle notification toggles
+      if (key === "dailyReminder" || key === "streakAlerts" || key === "milestoneNotifications" || key === "weeklySummary") {
+        handleNotificationToggle(key, value as boolean);
+        return next; // Don't show generic toast for notifications
+      }
+
       return next;
     });
-    toast.success("Setting saved!");
+    // Show generic toast for non-notification settings
+    const notifKeys = ["dailyReminder", "streakAlerts", "milestoneNotifications", "weeklySummary"];
+    if (!notifKeys.includes(key)) {
+      toast.success("Setting saved!");
+    }
   }, []);
 
   const saveUsername = (u: string) => {
@@ -219,8 +240,8 @@ function SettingsComponent() {
     <div className="min-h-screen bg-background text-foreground">
       <AppSidebar
         active={active}
-        onSelect={() => {}}
-        onSettings={() => {}}
+        onSelect={() => { }}
+        onSettings={() => { }}
         avatarUrl={profileQ.data?.avatar ?? null}
       />
       <main className="ml-20 p-8 lg:p-12 max-w-[1400px]">
@@ -248,9 +269,6 @@ function SettingsComponent() {
             {activeTab === "account" && (
               <AccountTab
                 username={username}
-                apiKeyStatus={apiStatusQ.data ?? "missing"}
-                showApiKey={showApiKey}
-                setShowApiKey={setShowApiKey}
                 settings={settings}
                 updateSetting={updateSetting}
                 onOpenDialog={() => setDialogOpen(true)}
@@ -411,11 +429,10 @@ function SettingNavItem({
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-3 rounded-lg font-display font-semibold text-sm tracking-wide transition-all cursor-glow text-left flex items-center gap-3 ${
-        active
-          ? "bg-neon/20 text-neon border border-neon/50 shadow-neon"
-          : "hover:bg-white/10 text-muted-foreground border border-transparent"
-      }`}
+      className={`px-4 py-3 rounded-lg font-display font-semibold text-sm tracking-wide transition-all cursor-glow text-left flex items-center gap-3 ${active
+        ? "bg-neon/20 text-neon border border-neon/50 shadow-neon"
+        : "hover:bg-white/10 text-muted-foreground border border-transparent"
+        }`}
     >
       <Icon className="size-4" />
       {label}
@@ -447,14 +464,12 @@ function ToggleSwitch({
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all shrink-0 cursor-glow ${
-          checked ? "bg-neon shadow-neon" : "bg-white/10"
-        }`}
+        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all shrink-0 cursor-glow ${checked ? "bg-neon shadow-neon" : "bg-white/10"
+          }`}
       >
         <span
-          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-            checked ? "translate-x-6" : "translate-x-1"
-          }`}
+          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${checked ? "translate-x-6" : "translate-x-1"
+            }`}
         />
       </button>
     </label>
@@ -465,9 +480,6 @@ function ToggleSwitch({
 
 function AccountTab({
   username,
-  apiKeyStatus,
-  showApiKey,
-  setShowApiKey,
   settings,
   updateSetting,
   onOpenDialog,
@@ -477,9 +489,6 @@ function AccountTab({
   hasProfile,
 }: {
   username: string;
-  apiKeyStatus: "configured" | "missing";
-  showApiKey: boolean;
-  setShowApiKey: (v: boolean) => void;
   settings: AppSettings;
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   onOpenDialog: () => void;
@@ -542,51 +551,16 @@ function AccountTab({
                   <button
                     key={d.id}
                     onClick={() => updateSetting("defaultDifficulty", d.id)}
-                    className={`px-5 py-2.5 rounded-lg font-display text-sm font-bold tracking-wide border transition-all cursor-glow ${
-                      isActive
-                        ? "bg-neon/20 text-neon border-neon/50 shadow-neon ring-1 ring-neon/30"
-                        : `${d.color} hover:border-neon/30`
-                    }`}
+                    className={`px-5 py-2.5 rounded-lg font-display text-sm font-bold tracking-wide border transition-all cursor-glow ${isActive
+                      ? "bg-neon/20 text-neon border-neon/50 shadow-neon ring-1 ring-neon/30"
+                      : `${d.color} hover:border-neon/30`
+                      }`}
                   >
                     {isActive && <Check className="size-3.5 inline mr-1.5 -mt-0.5" />}
                     {d.label}
                   </button>
                 );
               })}
-            </div>
-          </div>
-
-          {/* API Configuration */}
-          <div className="p-6 bg-card border border-white/10 rounded-lg">
-            <h3 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-              <Shield className="size-4 text-neon" /> API Configuration
-            </h3>
-            <div className="flex items-start gap-4 mb-6">
-              <AlertCircle className="size-5 text-neon mt-1 shrink-0" />
-              <div className="text-sm font-sans">
-                <p className="font-semibold mb-1">API Key Status</p>
-                <p className="text-muted-foreground">
-                  {apiKeyStatus === "configured"
-                    ? "✓ Your API key is properly configured"
-                    : "⚠ No API key found. Some features may not work."}
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-white/5 border border-white/10 rounded-lg p-4 mb-4">
-              <p className="text-xs text-muted-foreground font-mono mb-2 font-sans">Environment Variable:</p>
-              <p className="font-mono text-sm break-words">GROQ_API_KEY</p>
-            </div>
-
-            <div className="text-sm text-muted-foreground font-sans space-y-2">
-              <p>
-                🤖 <strong>Groq API</strong> is used for:
-              </p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li>AI-powered next problem recommendations</li>
-                <li>Topic-based problem search and analysis</li>
-                <li>Weakness analysis based on your solving history</li>
-              </ul>
             </div>
           </div>
 
@@ -670,9 +644,8 @@ function AppearanceTab({
                   key={c.id}
                   title={c.label}
                   onClick={() => updateSetting("accentColor", c.id)}
-                  className={`relative size-10 rounded-full border-2 transition-all cursor-glow hover:scale-110 ${
-                    isActive ? "ring-2 ring-offset-2 ring-offset-background border-white" : "border-white/20 hover:border-white/50"
-                  }`}
+                  className={`relative size-10 rounded-full border-2 transition-all cursor-glow hover:scale-110 ${isActive ? "ring-2 ring-offset-2 ring-offset-background border-white" : "border-white/20 hover:border-white/50"
+                    }`}
                   style={{ backgroundColor: c.color }}
                 >
                   {isActive && (
@@ -736,6 +709,45 @@ function NotificationsTab({
   settings: AppSettings;
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
 }) {
+  const [permissionStatus, setPermissionStatus] = useState<string>("default");
+
+  useEffect(() => {
+    if ("Notification" in window) {
+      setPermissionStatus(Notification.permission);
+    } else {
+      setPermissionStatus("unsupported");
+    }
+  }, []);
+
+  const handleTestNotification = () => {
+    toast("🔔 Test Notification", {
+      description: "Your notifications are working! You'll receive alerts based on your preferences.",
+      duration: 5000,
+    });
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification("grind.exe - Test", {
+          body: "Browser notifications are working! 🎉",
+          icon: "/logo.png",
+        });
+      } catch { /* fallback silently */ }
+    }
+  };
+
+  const handleRequestPermission = async () => {
+    if ("Notification" in window) {
+      const result = await Notification.requestPermission();
+      setPermissionStatus(result);
+      if (result === "granted") {
+        toast.success("Browser notifications enabled!");
+      } else if (result === "denied") {
+        toast.error("Browser notifications blocked. You can change this in browser settings.");
+      }
+    }
+  };
+
+  const anyEnabled = settings.dailyReminder || settings.streakAlerts || settings.milestoneNotifications || settings.weeklySummary;
+
   return (
     <section className="mb-12">
       <h2 className="font-display text-2xl font-bold mb-6 flex items-center gap-2">
@@ -743,6 +755,42 @@ function NotificationsTab({
       </h2>
 
       <div className="space-y-6">
+        {/* Browser Permission Status */}
+        <div className={`p-4 rounded-lg border flex items-center justify-between gap-4 ${permissionStatus === "granted"
+          ? "bg-emerald-500/10 border-emerald-500/30"
+          : permissionStatus === "denied"
+            ? "bg-red-500/10 border-red-500/30"
+            : "bg-yellow-500/10 border-yellow-500/30"
+          }`}>
+          <div className="flex items-center gap-3">
+            <div className={`size-2.5 rounded-full ${permissionStatus === "granted" ? "bg-emerald-400" :
+              permissionStatus === "denied" ? "bg-red-400" : "bg-yellow-400"
+              }`} />
+            <div>
+              <p className="text-sm font-display font-semibold">
+                {permissionStatus === "granted" && "Browser Notifications Active"}
+                {permissionStatus === "denied" && "Browser Notifications Blocked"}
+                {permissionStatus === "default" && "Browser Notifications Not Set"}
+                {permissionStatus === "unsupported" && "Browser Notifications Unsupported"}
+              </p>
+              <p className="text-xs text-muted-foreground font-sans mt-0.5">
+                {permissionStatus === "granted" && "You'll receive both browser and in-app notifications."}
+                {permissionStatus === "denied" && "Only in-app toast notifications will show. Enable in browser settings."}
+                {permissionStatus === "default" && "Click to enable browser notifications for the full experience."}
+                {permissionStatus === "unsupported" && "Your browser doesn't support notifications. In-app toasts will be used."}
+              </p>
+            </div>
+          </div>
+          {permissionStatus === "default" && (
+            <button
+              onClick={handleRequestPermission}
+              className="px-4 py-2 bg-neon/20 text-neon border border-neon/30 font-display text-xs font-bold tracking-wide rounded-lg hover:bg-neon/30 cursor-glow transition-all shrink-0"
+            >
+              Enable
+            </button>
+          )}
+        </div>
+
         <div className="p-6 bg-card border border-white/10 rounded-lg">
           <h3 className="font-display text-lg font-semibold mb-4">Notification Preferences</h3>
           <div className="divide-y divide-white/5">
@@ -756,29 +804,53 @@ function NotificationsTab({
               checked={settings.streakAlerts}
               onChange={(v) => updateSetting("streakAlerts", v)}
               label="Streak Alerts"
-              description="Alert when your streak is about to break."
+              description="Alert when your streak is about to break (after 6 PM if no submission today)."
             />
             <ToggleSwitch
               checked={settings.milestoneNotifications}
               onChange={(v) => updateSetting("milestoneNotifications", v)}
               label="Milestone Notifications"
-              description="Celebrate when you reach solving milestones (50, 100, 200…)."
+              description="Celebrate when you reach solving milestones (10, 25, 50, 100, 200…)."
             />
             <ToggleSwitch
               checked={settings.weeklySummary}
               onChange={(v) => updateSetting("weeklySummary", v)}
               label="Weekly Summary"
-              description="Receive a weekly progress summary recap."
+              description="Receive a weekly progress summary recap every Sunday."
             />
           </div>
+        </div>
+
+        {/* Test Notification */}
+        <div className="p-6 bg-card border border-white/10 rounded-lg">
+          <h3 className="font-display text-lg font-semibold mb-2 flex items-center gap-2">
+            <Zap className="size-4 text-neon" /> Test Notifications
+          </h3>
+          <p className="text-sm text-muted-foreground mb-4 font-sans">
+            Send a test notification to verify everything is working.
+          </p>
+          <button
+            onClick={handleTestNotification}
+            disabled={!anyEnabled}
+            className="px-6 py-3 bg-neon/10 text-neon border border-neon/30 font-display text-sm font-bold tracking-wide rounded-lg hover:bg-neon/20 cursor-glow transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Bell className="size-4" />
+            Send Test Notification
+          </button>
+          {!anyEnabled && (
+            <p className="text-xs text-muted-foreground mt-2 font-sans">
+              Enable at least one notification type above to test.
+            </p>
+          )}
         </div>
 
         <div className="p-4 bg-white/5 border border-white/10 rounded-lg flex items-start gap-3">
           <Info className="size-4 text-neon mt-0.5 shrink-0" />
           <p className="text-xs text-muted-foreground font-sans leading-relaxed">
-            Notification preferences are stored locally in your browser. Browser notification
-            permissions would need to be granted separately for push notifications. These
-            preferences control in-app toast notifications.
+            Notification preferences are stored locally in your browser. When enabled,
+            notifications trigger based on your LeetCode activity: daily reminders when
+            you open the app, streak alerts after 6 PM if you haven't solved today,
+            milestone celebrations when you hit key numbers, and weekly summaries every Sunday.
           </p>
         </div>
       </div>
@@ -790,29 +862,6 @@ function NotificationsTab({
 
 function AboutTab() {
   const buildTimestamp = "2026-05-22T22:00:00Z";
-
-  const shortcuts: Array<{ keys: string; description: string }> = [
-    { keys: "G then D", description: "Go to Dashboard" },
-    { keys: "G then S", description: "Go to Streaks" },
-    { keys: "G then A", description: "Go to AI Mode" },
-    { keys: "G then T", description: "Go to Topics" },
-    { keys: "G then ⚙", description: "Go to Settings" },
-    { keys: "R", description: "Refresh data" },
-    { keys: "?", description: "Show keyboard shortcuts" },
-  ];
-
-  const techStack = [
-    { name: "React", color: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
-    { name: "TypeScript", color: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-    { name: "TailwindCSS", color: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
-    { name: "TanStack Router", color: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
-    { name: "TanStack Query", color: "bg-red-500/20 text-red-400 border-red-500/30" },
-    { name: "TanStack Start", color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
-    { name: "Groq AI", color: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
-    { name: "Sonner", color: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" },
-    { name: "Lucide Icons", color: "bg-pink-500/20 text-pink-400 border-pink-500/30" },
-    { name: "Zod", color: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
-  ];
 
   return (
     <section className="mb-12">
@@ -890,9 +939,10 @@ function AboutTab() {
         {/* Links */}
         <div className="p-6 bg-card border border-white/10 rounded-lg">
           <h3 className="font-display text-lg font-semibold mb-4">Links</h3>
+          <p className="text-sm text-muted-foreground font-sans mb-3">Developed by Prawin M</p>
           <div className="flex gap-3 flex-wrap">
             <a
-              href="https://github.com"
+              href="https://github.com/mpwin07"
               target="_blank"
               rel="noreferrer"
               className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-lg font-display text-sm font-bold tracking-wide hover:bg-white/10 hover:border-neon/30 cursor-glow transition-all flex items-center gap-2"
@@ -902,7 +952,25 @@ function AboutTab() {
               <ExternalLink className="size-3 text-muted-foreground" />
             </a>
             <a
-              href="https://leetcode.com"
+              href="https://www.linkedin.com/in/prawinm07/"
+              target="_blank"
+              rel="noreferrer"
+              className="px-5 py-2.5 bg-[#0077b5]/10 border border-[#0077b5]/20 rounded-lg font-display text-sm font-bold tracking-wide text-[#0077b5] hover:bg-[#0077b5]/20 cursor-glow transition-all flex items-center gap-2"
+            >
+              <Linkedin className="size-4" />
+              LinkedIn
+              <ExternalLink className="size-3" />
+            </a>
+            <a
+              href="mailto:itz.mpwin07@gmail.com"
+              className="px-5 py-2.5 bg-red-500/10 border border-red-500/20 rounded-lg font-display text-sm font-bold tracking-wide text-red-400 hover:bg-red-500/20 cursor-glow transition-all flex items-center gap-2"
+            >
+              <Mail className="size-4" />
+              Gmail
+              <ExternalLink className="size-3" />
+            </a>
+            <a
+              href="https://leetcode.com/mpwin07"
               target="_blank"
               rel="noreferrer"
               className="px-5 py-2.5 bg-yellow-500/10 border border-yellow-500/20 rounded-lg font-display text-sm font-bold tracking-wide text-yellow-400 hover:bg-yellow-500/20 cursor-glow transition-all flex items-center gap-2"
@@ -910,56 +978,6 @@ function AboutTab() {
               LeetCode
               <ExternalLink className="size-3" />
             </a>
-            <a
-              href="https://console.groq.com/docs/quickstart"
-              target="_blank"
-              rel="noreferrer"
-              className="px-5 py-2.5 bg-purple-500/10 border border-purple-500/20 rounded-lg font-display text-sm font-bold tracking-wide text-purple-400 hover:bg-purple-500/20 cursor-glow transition-all flex items-center gap-2"
-            >
-              Groq API
-              <ExternalLink className="size-3" />
-            </a>
-          </div>
-        </div>
-
-        {/* Keyboard Shortcuts */}
-        <div className="p-6 bg-card border border-white/10 rounded-lg">
-          <h3 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-            <Keyboard className="size-4 text-neon" /> Keyboard Shortcuts
-          </h3>
-          <div className="space-y-2">
-            {shortcuts.map((s) => (
-              <div key={s.keys} className="flex items-center justify-between py-1.5">
-                <span className="text-sm text-muted-foreground font-sans">{s.description}</span>
-                <div className="flex gap-1">
-                  {s.keys.split(" then ").map((key, i) => (
-                    <span key={i} className="flex items-center gap-1">
-                      {i > 0 && <span className="text-muted-foreground text-xs mx-1">→</span>}
-                      <kbd className="px-2 py-1 bg-white/10 border border-white/20 rounded text-xs font-mono font-bold">
-                        {key}
-                      </kbd>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Tech Stack */}
-        <div className="p-6 bg-card border border-white/10 rounded-lg">
-          <h3 className="font-display text-lg font-semibold mb-4 flex items-center gap-2">
-            <Zap className="size-4 text-neon" /> Tech Stack
-          </h3>
-          <div className="flex gap-2 flex-wrap">
-            {techStack.map((t) => (
-              <span
-                key={t.name}
-                className={`px-3 py-1.5 rounded-full border text-xs font-display font-bold tracking-wide ${t.color}`}
-              >
-                {t.name}
-              </span>
-            ))}
           </div>
         </div>
 

@@ -9,6 +9,13 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { UsernameDialog } from "@/components/UsernameDialog";
 import { fetchLeetCodeProfile, type LCProfile } from "@/lib/leetcode.functions";
 import { suggestNextProblem, type AISuggestion } from "@/lib/ai-suggest.functions";
+import {
+  checkDailyReminder,
+  checkStreakAlert,
+  checkMilestone,
+  checkWeeklySummary,
+  initNotificationSchedulers,
+} from "@/lib/notifications";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,6 +32,28 @@ export const Route = createFileRoute("/")({
 
 const STORAGE_KEY = "lc:username";
 const AI_SUGGESTION_STORAGE_KEY = "lc:ai-suggestion";
+const SKIPPED_SUGGESTIONS_KEY = "lc:skipped-suggestions";
+
+function getSkippedTitles(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(SKIPPED_SUGGESTIONS_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function addSkippedTitle(title: string) {
+  if (typeof window === "undefined") return;
+  const titles = getSkippedTitles();
+  if (!titles.includes(title)) {
+    titles.push(title);
+    // Keep only last 20 to avoid bloat
+    const trimmed = titles.slice(-20);
+    localStorage.setItem(SKIPPED_SUGGESTIONS_KEY, JSON.stringify(trimmed));
+  }
+}
 
 function Dashboard() {
   const [username, setUsername] = useState<string>("");
@@ -74,6 +103,7 @@ function Dashboard() {
           streak: profileQ.data!.streak,
           recentTitles: profileQ.data!.recent.map((r) => r.title),
           topTags: profileQ.data!.topTags.map((t) => t.tagName),
+          skipTitles: getSkippedTitles(),
         },
       }),
     enabled: !!profileQ.data,
@@ -97,6 +127,28 @@ function Dashboard() {
       }
     }
   }, [suggestQ.data]);
+
+  // Initialize notification schedulers
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const cleanup = initNotificationSchedulers();
+    return cleanup;
+  }, []);
+
+  // Run notification checks when profile data loads
+  useEffect(() => {
+    if (!profileQ.data) return;
+    const p = profileQ.data;
+
+    // Check if user has submitted today (look at submission calendar)
+    const today = new Date();
+    const todayTs = Math.floor(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) / 1000);
+    const hasSubmittedToday = (p.submissionCalendar[String(todayTs)] ?? 0) > 0;
+
+    checkStreakAlert(p.streak, hasSubmittedToday);
+    checkMilestone(p.totalSolved);
+    checkWeeklySummary(p.totalSolved, p.streak, p.easySolved, p.mediumSolved, p.hardSolved);
+  }, [profileQ.data]);
 
   const saveUsername = (u: string) => {
     localStorage.setItem(STORAGE_KEY, u);
@@ -221,19 +273,23 @@ function StreakCard({ streak, loading }: { streak: number; loading: boolean }) {
   );
 }
 
-function NextProblemCard({ suggest, loading, onSkip }: { suggest?: AISuggestion; loading: boolean; onSkip?: () => Promise<void> }) {
+function NextProblemCard({ suggest, loading, onSkip }: { suggest?: AISuggestion; loading: boolean; onSkip?: (currentTitle?: string) => Promise<void> }) {
   const [skipping, setSkipping] = useState(false);
   const queryClient = useQueryClient();
 
   const handleSkip = async () => {
     setSkipping(true);
     try {
+      // Track the skipped suggestion so AI won't repeat it
+      if (suggest?.title) {
+        addSkippedTitle(suggest.title);
+      }
       if (typeof window !== "undefined") {
         sessionStorage.removeItem(AI_SUGGESTION_STORAGE_KEY);
       }
       // Remove cached data so it forces a fresh fetch
       queryClient.removeQueries({ queryKey: ["ai-suggest"] });
-      await onSkip?.();
+      await onSkip?.(suggest?.title);
     } finally {
       setSkipping(false);
     }

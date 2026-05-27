@@ -141,7 +141,20 @@ function RootComponent() {
           if (color) {
             document.documentElement.style.setProperty('--neon', color);
             document.documentElement.style.setProperty('--neon-glow', color);
+            document.documentElement.style.setProperty('--primary', color);
+            document.documentElement.style.setProperty('--accent', color);
+            document.documentElement.style.setProperty('--ring', color);
           }
+        }
+
+        // Apply compact mode
+        if (settings.compactMode) {
+          document.documentElement.classList.add('compact-mode');
+        }
+
+        // Apply animations preference
+        if (settings.animationsEnabled === false) {
+          document.documentElement.classList.add('no-animations');
         }
       }
     } catch (e) {
