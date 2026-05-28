@@ -1,12 +1,12 @@
 import { LayoutDashboard, Sparkles, Flame, Settings, Timer } from "lucide-react";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 const items = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, to: "/" as const },
-  { id: "ai-mode", label: "AI Mode", icon: Sparkles, to: "/ai-mode" as const },
-  { id: "streaks", label: "Streaks", icon: Flame, to: "/streaks" as const },
-  { id: "time-analytics", label: "Analytics", icon: Timer, to: "/time-analytics" as const },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, to: "/" },
+  { id: "ai-mode", label: "AI Mode", icon: Sparkles, to: "/ai-mode" },
+  { id: "streaks", label: "Streaks", icon: Flame, to: "/streaks" },
+  { id: "time-analytics", label: "Analytics", icon: Timer, to: "/time-analytics" },
 ];
 
 export function AppSidebar({
@@ -14,14 +14,9 @@ export function AppSidebar({
   onSelect,
   onSettings,
   avatarUrl,
-}: {
-  active?: string;
-  onSelect?: (id: string) => void;
-  onSettings?: () => void;
-  avatarUrl?: string | null;
 }) {
-  const routerState = useRouterState();
-  const currentPath = routerState.location.pathname;
+  const location = useLocation();
+  const currentPath = location.pathname;
 
   return (
     <nav className="fixed left-0 top-0 h-screen w-20 border-r border-white/10 bg-night/60 backdrop-blur-xl flex flex-col items-center py-6 gap-8 z-40">

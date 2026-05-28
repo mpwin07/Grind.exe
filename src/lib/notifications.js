@@ -4,17 +4,7 @@ const SETTINGS_KEY = "lc:settings";
 const NOTIF_STATE_KEY = "lc:notification-state";
 const MILESTONE_THRESHOLDS = [10, 25, 50, 75, 100, 150, 200, 250, 300, 400, 500, 750, 1000];
 
-interface NotificationState {
-  lastDailyReminder?: string; // ISO date string
-  lastStreakAlert?: string; // ISO date string
-  lastWeeklySummary?: string; // ISO date string
-  celebratedMilestones?: number[];
-  dailyReminderTimerId?: number;
-  streakAlertTimerId?: number;
-  weeklySummaryTimerId?: number;
-}
-
-function loadNotifState(): NotificationState {
+function loadNotifState() {
   try {
     const raw = localStorage.getItem(NOTIF_STATE_KEY);
     return raw ? JSON.parse(raw) : {};
@@ -23,7 +13,7 @@ function loadNotifState(): NotificationState {
   }
 }
 
-function saveNotifState(state: NotificationState) {
+function saveNotifState(state) {
   localStorage.setItem(NOTIF_STATE_KEY, JSON.stringify(state));
 }
 
@@ -39,7 +29,7 @@ function loadSettings() {
 /**
  * Request browser notification permission. Returns true if granted.
  */
-export async function requestNotificationPermission(): Promise<boolean> {
+export async function requestNotificationPermission() {
   if (!("Notification" in window)) return false;
   if (Notification.permission === "granted") return true;
   if (Notification.permission === "denied") return false;
@@ -50,7 +40,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
 /**
  * Send a browser notification (if permission granted) + in-app toast
  */
-function sendNotification(title: string, body: string, icon?: string) {
+function sendNotification(title, body, icon) {
   // Always show in-app toast
   toast(title, { description: body, duration: 8000 });
 
@@ -93,7 +83,7 @@ export function checkDailyReminder() {
 /**
  * Check streak alert — fires if user hasn't solved today and has an active streak
  */
-export function checkStreakAlert(streak: number, hasSubmittedToday: boolean) {
+export function checkStreakAlert(streak, hasSubmittedToday) {
   const settings = loadSettings();
   if (!settings.streakAlerts) return;
   if (streak <= 0) return;
@@ -119,7 +109,7 @@ export function checkStreakAlert(streak: number, hasSubmittedToday: boolean) {
 /**
  * Check milestone celebrations
  */
-export function checkMilestone(totalSolved: number) {
+export function checkMilestone(totalSolved) {
   const settings = loadSettings();
   if (!settings.milestoneNotifications) return;
 
@@ -144,11 +134,11 @@ export function checkMilestone(totalSolved: number) {
  * Check weekly summary
  */
 export function checkWeeklySummary(
-  totalSolved: number,
-  streak: number,
-  easySolved: number,
-  mediumSolved: number,
-  hardSolved: number,
+  totalSolved,
+  streak,
+  easySolved,
+  mediumSolved,
+  hardSolved,
 ) {
   const settings = loadSettings();
   if (!settings.weeklySummary) return;
@@ -187,10 +177,7 @@ export function initNotificationSchedulers() {
  * Handle notification toggle — when user enables a notification type,
  * request browser permission and show a confirmation
  */
-export async function handleNotificationToggle(
-  type: "dailyReminder" | "streakAlerts" | "milestoneNotifications" | "weeklySummary",
-  enabled: boolean,
-): Promise<void> {
+export async function handleNotificationToggle(type, enabled) {
   if (!enabled) {
     toast.success(`${getNotifLabel(type)} disabled`);
     return;
@@ -214,7 +201,7 @@ export async function handleNotificationToggle(
   }
 }
 
-function getNotifLabel(type: string): string {
+function getNotifLabel(type) {
   switch (type) {
     case "dailyReminder": return "Daily Reminder";
     case "streakAlerts": return "Streak Alerts";

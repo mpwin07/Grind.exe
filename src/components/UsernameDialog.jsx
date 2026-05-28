@@ -15,11 +15,6 @@ export function UsernameDialog({
   onOpenChange,
   currentUsername,
   onSave,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  currentUsername: string;
-  onSave: (username: string) => void;
 }) {
   const [value, setValue] = useState(currentUsername);
   useEffect(() => setValue(currentUsername), [currentUsername, open]);

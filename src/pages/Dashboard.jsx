@@ -1,14 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { ExternalLink, RefreshCw, Trophy, TrendingUp } from "lucide-react";
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { UsernameDialog } from "@/components/UsernameDialog";
-import { fetchLeetCodeProfile, type LCProfile } from "@/lib/leetcode.functions";
-import { suggestNextProblem, type AISuggestion } from "@/lib/ai-suggest.functions";
+import { fetchProfile, suggestProblem } from "@/lib/api";
 import {
   checkDailyReminder,
   checkStreakAlert,
@@ -17,46 +14,32 @@ import {
   initNotificationSchedulers,
 } from "@/lib/notifications";
 
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Dashboard | grind.exe" },
-      {
-        name: "description",
-        content: "Track your grind.exe with AI-powered problem suggestions and streak tracking.",
-      },
-    ],
-  }),
-  component: Dashboard,
-});
-
 const STORAGE_KEY = "lc:username";
 const AI_SUGGESTION_STORAGE_KEY = "lc:ai-suggestion";
 const SKIPPED_SUGGESTIONS_KEY = "lc:skipped-suggestions";
 
-function getSkippedTitles(): string[] {
+function getSkippedTitles() {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(SKIPPED_SUGGESTIONS_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : [];
+    return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-function addSkippedTitle(title: string) {
+function addSkippedTitle(title) {
   if (typeof window === "undefined") return;
   const titles = getSkippedTitles();
   if (!titles.includes(title)) {
     titles.push(title);
-    // Keep only last 20 to avoid bloat
     const trimmed = titles.slice(-20);
     localStorage.setItem(SKIPPED_SUGGESTIONS_KEY, JSON.stringify(trimmed));
   }
 }
 
-function Dashboard() {
-  const [username, setUsername] = useState<string>("");
+export default function Dashboard() {
+  const [username, setUsername] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [active, setActive] = useState("dashboard");
 
@@ -67,22 +50,20 @@ function Dashboard() {
     else setDialogOpen(true);
   }, []);
 
-  const fetchProfile = useServerFn(fetchLeetCodeProfile);
-  const profileQ = useQuery<LCProfile>({
+  const profileQ = useQuery({
     queryKey: ["lc-profile", username],
-    queryFn: () => fetchProfile({ data: { username } }),
+    queryFn: () => fetchProfile(username),
     enabled: !!username,
     staleTime: 1000 * 60 * 5,
     retry: 1,
   });
 
-  const fetchSuggest = useServerFn(suggestNextProblem);
-  const getStoredSuggestion = (): AISuggestion | undefined => {
+  const getStoredSuggestion = () => {
     if (typeof window === "undefined") return undefined;
     const stored = sessionStorage.getItem(AI_SUGGESTION_STORAGE_KEY);
     if (stored) {
       try {
-        return JSON.parse(stored) as AISuggestion;
+        return JSON.parse(stored);
       } catch {
         return undefined;
       }
@@ -90,21 +71,19 @@ function Dashboard() {
     return undefined;
   };
 
-  const suggestQ = useQuery<AISuggestion>({
+  const suggestQ = useQuery({
     queryKey: ["ai-suggest", username, profileQ.data?.totalSolved],
     queryFn: () =>
-      fetchSuggest({
-        data: {
-          username,
-          totalSolved: profileQ.data!.totalSolved,
-          easySolved: profileQ.data!.easySolved,
-          mediumSolved: profileQ.data!.mediumSolved,
-          hardSolved: profileQ.data!.hardSolved,
-          streak: profileQ.data!.streak,
-          recentTitles: profileQ.data!.recent.map((r) => r.title),
-          topTags: profileQ.data!.topTags.map((t) => t.tagName),
-          skipTitles: getSkippedTitles(),
-        },
+      suggestProblem({
+        username,
+        totalSolved: profileQ.data.totalSolved,
+        easySolved: profileQ.data.easySolved,
+        mediumSolved: profileQ.data.mediumSolved,
+        hardSolved: profileQ.data.hardSolved,
+        streak: profileQ.data.streak,
+        recentTitles: profileQ.data.recent.map((r) => r.title),
+        topTags: profileQ.data.topTags.map((t) => t.tagName),
+        skipTitles: getSkippedTitles(),
       }),
     enabled: !!profileQ.data,
     staleTime: 1000 * 60 * 30,
@@ -113,13 +92,12 @@ function Dashboard() {
   });
 
   useEffect(() => {
-    if (profileQ.error) toast.error(`Couldn't load LeetCode: ${(profileQ.error as Error).message}`);
+    if (profileQ.error) toast.error(`Couldn't load LeetCode: ${profileQ.error.message}`);
   }, [profileQ.error]);
   useEffect(() => {
-    if (suggestQ.error) toast.error(`AI Coach: ${(suggestQ.error as Error).message}`);
+    if (suggestQ.error) toast.error(`AI Coach: ${suggestQ.error.message}`);
   }, [suggestQ.error]);
 
-  // Persist AI suggestion to sessionStorage
   useEffect(() => {
     if (suggestQ.data) {
       if (typeof window !== "undefined") {
@@ -128,29 +106,24 @@ function Dashboard() {
     }
   }, [suggestQ.data]);
 
-  // Initialize notification schedulers
   useEffect(() => {
     if (typeof window === "undefined") return;
     const cleanup = initNotificationSchedulers();
     return cleanup;
   }, []);
 
-  // Run notification checks when profile data loads
   useEffect(() => {
     if (!profileQ.data) return;
     const p = profileQ.data;
-
-    // Check if user has submitted today (look at submission calendar)
     const today = new Date();
     const todayTs = Math.floor(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) / 1000);
     const hasSubmittedToday = (p.submissionCalendar[String(todayTs)] ?? 0) > 0;
-
     checkStreakAlert(p.streak, hasSubmittedToday);
     checkMilestone(p.totalSolved);
     checkWeeklySummary(p.totalSolved, p.streak, p.easySolved, p.mediumSolved, p.hardSolved);
   }, [profileQ.data]);
 
-  const saveUsername = (u: string) => {
+  const saveUsername = (u) => {
     localStorage.setItem(STORAGE_KEY, u);
     setUsername(u);
   };
@@ -175,12 +148,12 @@ function Dashboard() {
 
         <div className="grid grid-cols-12 gap-6 mt-10">
           <StreakCard streak={profileQ.data?.streak ?? 0} loading={profileQ.isLoading} />
-          <NextProblemCard 
-            suggest={suggestQ.data} 
-            loading={suggestQ.isLoading} 
+          <NextProblemCard
+            suggest={suggestQ.data}
+            loading={suggestQ.isLoading}
             onSkip={async () => {
               await suggestQ.refetch();
-            }} 
+            }}
           />
           <ActivityHeatmap calendar={profileQ.data?.submissionCalendar ?? {}} />
         </div>
@@ -215,10 +188,6 @@ function Header({
   username,
   onRefresh,
   refreshing,
-}: {
-  username: string;
-  onRefresh: () => void;
-  refreshing: boolean;
 }) {
   return (
     <header className="flex flex-wrap gap-6 justify-between items-end">
@@ -244,7 +213,7 @@ function Header({
   );
 }
 
-function StreakCard({ streak, loading }: { streak: number; loading: boolean }) {
+function StreakCard({ streak, loading }) {
   const max = 100;
   const pct = Math.min(streak / max, 1);
   return (
@@ -273,21 +242,19 @@ function StreakCard({ streak, loading }: { streak: number; loading: boolean }) {
   );
 }
 
-function NextProblemCard({ suggest, loading, onSkip }: { suggest?: AISuggestion; loading: boolean; onSkip?: (currentTitle?: string) => Promise<void> }) {
+function NextProblemCard({ suggest, loading, onSkip }) {
   const [skipping, setSkipping] = useState(false);
   const queryClient = useQueryClient();
 
   const handleSkip = async () => {
     setSkipping(true);
     try {
-      // Track the skipped suggestion so AI won't repeat it
       if (suggest?.title) {
         addSkippedTitle(suggest.title);
       }
       if (typeof window !== "undefined") {
         sessionStorage.removeItem(AI_SUGGESTION_STORAGE_KEY);
       }
-      // Remove cached data so it forces a fresh fetch
       queryClient.removeQueries({ queryKey: ["ai-suggest"] });
       await onSkip?.(suggest?.title);
     } finally {
@@ -352,9 +319,9 @@ function NextProblemCard({ suggest, loading, onSkip }: { suggest?: AISuggestion;
   );
 }
 
-function ActivityHeatmap({ calendar }: { calendar: Record<string, number> }) {
+function ActivityHeatmap({ calendar }) {
   const days = useMemo(() => {
-    const out: Array<{ key: string; count: number }> = [];
+    const out = [];
     const today = new Date();
     for (let i = 119; i >= 0; i--) {
       const d = new Date(today);
@@ -369,7 +336,7 @@ function ActivityHeatmap({ calendar }: { calendar: Record<string, number> }) {
     return out;
   }, [calendar]);
 
-  const intensity = (c: number) =>
+  const intensity = (c) =>
     c === 0 ? "bg-white/5" : c < 2 ? "bg-neon/20" : c < 4 ? "bg-neon/40" : c < 7 ? "bg-neon/70" : "bg-neon shadow-neon";
 
   return (
@@ -399,8 +366,8 @@ function ActivityHeatmap({ calendar }: { calendar: Record<string, number> }) {
   );
 }
 
-function DifficultyBreakdown({ profile }: { profile?: LCProfile }) {
-  const items: Array<{ label: string; solved: number; total: number; color: string }> = [
+function DifficultyBreakdown({ profile }) {
+  const items = [
     {
       label: "Easy",
       solved: profile?.easySolved ?? 0,
@@ -448,7 +415,7 @@ function DifficultyBreakdown({ profile }: { profile?: LCProfile }) {
   );
 }
 
-function RecentSolves({ recent, loading }: { recent: LCProfile["recent"]; loading: boolean }) {
+function RecentSolves({ recent, loading }) {
   return (
     <section className="mt-12">
       <h3 className="font-display text-sm font-bold tracking-wide text-muted-foreground mb-6 uppercase">
@@ -464,9 +431,7 @@ function RecentSolves({ recent, loading }: { recent: LCProfile["recent"]; loadin
         <p className="text-sm text-muted-foreground font-sans">No recent solves yet. Start solving to build your momentum!</p>
       ) : (
         <div className="relative flex items-start gap-4 overflow-x-auto pb-4 pt-4 snap-x hide-scrollbar">
-          {/* Horizontal connecting line */}
           <div className="absolute top-[21px] left-0 w-[200%] h-[2px] bg-white/10 -z-10" />
-
           {recent.slice(0, 10).map((s, i) => (
             <a
               key={`${s.titleSlug}-${i}`}
@@ -475,10 +440,7 @@ function RecentSolves({ recent, loading }: { recent: LCProfile["recent"]; loadin
               rel="noreferrer"
               className="relative flex flex-col items-center gap-4 snap-start group w-44 shrink-0"
             >
-              {/* Timeline node */}
               <div className="w-3 h-3 rounded-full bg-night border-2 border-neon group-hover:bg-neon group-hover:shadow-[0_0_12px_var(--color-neon)] transition-all z-10" />
-
-              {/* Title Card */}
               <div className="p-4 border border-white/10 bg-card rounded-xl group-hover:border-neon group-hover:bg-white/5 cursor-glow transition-all w-full text-center">
                 <div className="text-sm font-semibold truncate group-hover:text-neon transition font-sans mb-1">
                   {s.title}
@@ -495,9 +457,9 @@ function RecentSolves({ recent, loading }: { recent: LCProfile["recent"]; loadin
   );
 }
 
-function MilestoneSection({ profile }: { profile?: LCProfile }) {
+function MilestoneSection({ profile }) {
   if (!profile) return null;
-  
+
   return (
     <section className="mt-12">
       <h3 className="font-display text-sm font-bold tracking-wide text-muted-foreground mb-4 uppercase">
@@ -536,11 +498,6 @@ function MilestoneCard({
   value,
   icon: Icon,
   color,
-}: {
-  label: string;
-  value: string | number;
-  icon?: any;
-  color?: string;
 }) {
   return (
     <div className="p-6 bg-card border border-white/10 rounded-2xl cursor-glow transition-all hover:border-neon">
@@ -557,7 +514,7 @@ function MilestoneCard({
   );
 }
 
-function timeAgo(ts: number): string {
+function timeAgo(ts) {
   const diff = Math.floor(Date.now() / 1000 - ts);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
