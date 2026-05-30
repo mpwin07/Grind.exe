@@ -13,7 +13,7 @@ An AI-powered, highly customized LeetCode tracking dashboard designed with a sle
 
 ## 🛠️ Tech Stack
 
-- **Framework**: [TanStack Start](https://tanstack.com/start) & [React 19](https://react.dev/)
+- **Framework**:[React 19](https://react.dev/)
 - **Build Tool**: [Vite](https://vitejs.dev/)
 - **Routing**: [TanStack Router](https://tanstack.com/router)
 - **Data Fetching**: [TanStack Query](https://tanstack.com/query)
