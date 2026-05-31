@@ -9,7 +9,7 @@ Welcome to **grind.exe**! This is your ultimate personal study partner for codin
 Instead of tracking your practice on spreadsheets, **grind.exe** connects to your LeetCode profile to automatically gather your statistics, analyze your strengths and weaknesses, reward your consistency, and help you get faster at solving coding problems.
 
 ---
-
+    
 ## 🌟 Main Features
 
 ### 1. Main Dashboard (Home Screen)
