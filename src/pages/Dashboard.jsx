@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ExternalLink, RefreshCw, Trophy, TrendingUp } from "lucide-react";
+import { ExternalLink, RefreshCw, Trophy, TrendingUp, Loader, Code2, Copy, Check, ShieldCheck, ShieldAlert } from "lucide-react";
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { UsernameDialog } from "@/components/UsernameDialog";
-import { fetchProfile, suggestProblem } from "@/lib/api";
+import { fetchProfile, suggestProblem, getSolution } from "@/lib/api";
 import {
   checkDailyReminder,
   checkStreakAlert,
@@ -244,6 +244,11 @@ function StreakCard({ streak, loading }) {
 
 function NextProblemCard({ suggest, loading, onSkip }) {
   const [skipping, setSkipping] = useState(false);
+  const [showSolution, setShowSolution] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState("java");
+  const [solutionLoading, setSolutionLoading] = useState(false);
+  const [solution, setSolution] = useState(null);
+  const [solutionLanguage, setSolutionLanguage] = useState(null);
   const queryClient = useQueryClient();
 
   const handleSkip = async () => {
@@ -256,9 +261,40 @@ function NextProblemCard({ suggest, loading, onSkip }) {
         sessionStorage.removeItem(AI_SUGGESTION_STORAGE_KEY);
       }
       queryClient.removeQueries({ queryKey: ["ai-suggest"] });
+      // Reset solution state on skip
+      setShowSolution(false);
+      setSolution(null);
+      setSolutionLanguage(null);
       await onSkip?.(suggest?.title);
     } finally {
       setSkipping(false);
+    }
+  };
+
+  const handleFetchSolution = async (lang) => {
+    if (!suggest?.title || !suggest?.slug) return;
+    const targetLang = lang ?? selectedLanguage;
+    setSolutionLoading(true);
+    try {
+      const result = await getSolution({
+        title: suggest.title,
+        slug: suggest.slug,
+        language: targetLang,
+      });
+      setSolution(result);
+      setSolutionLanguage(targetLang);
+    } catch (error) {
+      toast.error(`Failed to fetch solution: ${error.message}`);
+    } finally {
+      setSolutionLoading(false);
+    }
+  };
+
+  const handleLanguageChange = (lang) => {
+    setSelectedLanguage(lang);
+    if (showSolution) {
+      setSolution(null);
+      handleFetchSolution(lang);
     }
   };
 
@@ -268,6 +304,16 @@ function NextProblemCard({ suggest, loading, onSkip }) {
       : suggest?.difficulty === "Medium"
         ? "bg-yellow-500/20 text-yellow-400"
         : "bg-emerald-500/20 text-emerald-400";
+
+  const languageLabels = {
+    java: "Java",
+    python: "Python",
+    cpp: "C++",
+    javascript: "JavaScript",
+    typescript: "TypeScript",
+    go: "Go",
+    rust: "Rust",
+  };
 
   return (
     <section className="col-span-12 md:col-span-8 bg-card rounded-2xl p-6 border border-white/10 cursor-glow flex flex-col justify-between min-h-[200px]">
@@ -313,8 +359,83 @@ function NextProblemCard({ suggest, loading, onSkip }) {
           >
             {skipping ? "SKIPPING…" : "SKIP"}
           </button>
+          <button
+            disabled={!suggest || loading}
+            onClick={() => {
+              setShowSolution(!showSolution);
+              if (!showSolution && !solution) {
+                handleFetchSolution();
+              }
+            }}
+            className="px-6 py-3 border border-white/10 font-display text-sm font-bold tracking-wide hover:border-neon hover:text-neon transition rounded-lg cursor-glow disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 justify-center"
+          >
+            {solutionLoading ? (
+              <>
+                <Loader className="size-3.5 animate-spin" />
+                Loading…
+              </>
+            ) : showSolution ? (
+              "HIDE SOLUTION"
+            ) : (
+              "SOLUTION"
+            )}
+          </button>
+          {/* Language dropdown */}
+          <select
+            value={selectedLanguage}
+            onChange={(e) => handleLanguageChange(e.target.value)}
+            className="px-3 py-2 bg-card border border-white/10 rounded-lg text-xs font-sans focus:outline-none focus:border-neon cursor-glow transition-all"
+          >
+            <option value="java">Java</option>
+            <option value="python">Python</option>
+            <option value="cpp">C++</option>
+            <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
+            <option value="go">Go</option>
+            <option value="rust">Rust</option>
+          </select>
         </div>
       </div>
+
+      {/* Solution Display */}
+      {showSolution && (
+        <div className="mt-6 pt-6 border-t border-white/10">
+          {solutionLoading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader className="size-5 animate-spin mr-3" />
+              <span className="font-sans">
+                Generating {languageLabels[selectedLanguage]} solutions…
+              </span>
+            </div>
+          ) : solution ? (() => {
+            const areSame = solution.bruteForce.trim() === solution.optimized.trim();
+            const langLabel = languageLabels[solutionLanguage ?? selectedLanguage] ?? selectedLanguage;
+            return (
+              <div className="max-w-3xl mx-auto space-y-8">
+                {/* Optimized Solution (always shown first) */}
+                <div>
+                  <h4 className="font-display text-sm font-bold mb-4 text-emerald-400 uppercase flex items-center gap-2">
+                    <ShieldCheck className="size-4" />
+                    {areSame ? "Solution" : "Optimized Approach"}
+                  </h4>
+                  <SolutionCodeBlock code={solution.optimized} language={langLabel} />
+                </div>
+
+                {/* Brute Force Solution (hidden if same as optimized) */}
+                {!areSame && (
+                  <div>
+                    <h4 className="font-display text-sm font-bold mb-4 text-orange-400 uppercase flex items-center gap-2">
+                      <ShieldAlert className="size-4" />
+                      Brute Force Approach
+                    </h4>
+                    <SolutionCodeBlock code={solution.bruteForce} language={langLabel} />
+                  </div>
+                )}
+              </div>
+            );
+          })() : null}
+        </div>
+      )}
     </section>
   );
 }
@@ -520,4 +641,65 @@ function timeAgo(ts) {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+/* ─── Solution Code Block (same format as AI Mode) ─── */
+function SolutionCodeBlock({ code, language }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      toast.success("Copied to clipboard!");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = code;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      toast.success("Copied to clipboard!");
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+  return (
+    <div className="rounded-xl overflow-hidden border border-white/[0.08] bg-[#0c0c15] shadow-lg shadow-black/30">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-5 py-3 bg-white/[0.025] border-b border-white/[0.08]">
+        <div className="flex items-center gap-2.5">
+          <Code2 className="size-4 text-white/40" />
+          <span className="font-sans text-sm font-semibold text-white/70 tracking-wide">{language}</span>
+        </div>
+        <button
+          onClick={handleCopy}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-sans font-semibold transition-all duration-200 ${
+            copied
+              ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30"
+              : "bg-white/[0.04] text-white/50 hover:bg-white/[0.08] hover:text-white/80 ring-1 ring-white/[0.06]"
+          }`}
+          title="Copy to clipboard"
+        >
+          {copied ? (
+            <>
+              <Check className="size-3.5" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="size-3.5" />
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+      {/* Code body */}
+      <div className="px-6 py-5 overflow-x-auto max-h-[600px] overflow-y-auto">
+        <pre className="font-mono text-[13px] leading-[1.75] text-white/85 whitespace-pre m-0">{code}</pre>
+      </div>
+    </div>
+  );
 }
