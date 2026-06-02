@@ -202,67 +202,186 @@ Example of correct JSON format:
     const content = json.choices?.[0]?.message?.content;
     if (!content) throw new Error("No response from AI");
 
-    function sanitizeJsonResponse(raw) {
-      let jsonStr = raw;
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (match) jsonStr = match[0];
+    /**
+     * Robustly extract JSON with bruteForce / optimized fields from raw LLM text.
+     * LLMs frequently produce malformed JSON (unescaped newlines, embedded quotes
+     * inside code strings, trailing commas, markdown wrappers, etc.).
+     * We use a layered strategy: try progressively looser parsing until one works.
+     */
+    function extractJsonObject(raw) {
+      // Strip markdown code fences if present
+      let text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
+      // 1. Try direct parse first (fastest path)
+      try {
+        const direct = JSON.parse(text);
+        if (direct && typeof direct.bruteForce === "string" && typeof direct.optimized === "string") {
+          return direct;
+        }
+      } catch { /* fall through */ }
+
+      // 2. Extract the outermost { ... } block (greedy)
+      const objMatch = text.match(/\{[\s\S]*\}/);
+      if (objMatch) text = objMatch[0];
+
+      // 3. Sanitize: walk char-by-char with awareness of JSON structure,
+      //    escaping problematic characters inside string values.
+      try {
+        const sanitized = sanitizeJsonString(text);
+        const parsed = JSON.parse(sanitized);
+        if (parsed && typeof parsed.bruteForce === "string" && typeof parsed.optimized === "string") {
+          return parsed;
+        }
+      } catch { /* fall through */ }
+
+      // 4. Fallback: extract the two fields individually with regex.
+      //    Match "bruteForce" : "..." or "optimized" : "..." greedily.
+      const bf = extractField(text, "bruteForce");
+      const opt = extractField(text, "optimized");
+      if (bf !== null && opt !== null) {
+        return { bruteForce: bf, optimized: opt };
+      }
+
+      throw new Error("Could not parse AI response as JSON");
+    }
+
+    /**
+     * Walk through a JSON string char-by-char and escape control characters
+     * that appear inside quoted strings.  Handles the common LLM failure mode
+     * of literal newlines / tabs inside JSON string values.
+     */
+    function sanitizeJsonString(jsonStr) {
       let result = "";
       let i = 0;
+
       while (i < jsonStr.length) {
         const ch = jsonStr[i];
-        if (ch === '"') {
+
+        if (ch !== '"') {
+          // Outside of a string — pass through
           result += ch;
           i++;
-          while (i < jsonStr.length) {
-            const c = jsonStr[i];
-            if (c === "\\") {
-              result += c;
-              i++;
-              if (i < jsonStr.length) {
-                result += jsonStr[i];
-                i++;
+          continue;
+        }
+
+        // Start of a JSON string
+        result += '"';
+        i++;
+
+        while (i < jsonStr.length) {
+          const c = jsonStr[i];
+
+          // Handle escape sequences (already escaped by the LLM)
+          if (c === "\\") {
+            if (i + 1 < jsonStr.length) {
+              const next = jsonStr[i + 1];
+              // Valid JSON escape characters
+              if ('"\\\/bfnrtu'.includes(next)) {
+                result += c + next;
+                i += 2;
+                continue;
               }
+              // Invalid escape — keep the backslash escaped
+              result += "\\\\";
+              i++;
               continue;
             }
-            if (c === '"') {
-              result += c;
-              i++;
-              break;
-            }
-            if (c === "\n") {
-              result += "\\n";
-            } else if (c === "\r") {
-              result += "\\r";
-            } else if (c === "\t") {
-              result += "\\t";
-            } else if (c === "\b") {
-              result += "\\b";
-            } else if (c === "\f") {
-              result += "\\f";
-            } else if (c.charCodeAt(0) < 32) {
-              result += "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
-            } else {
-              result += c;
-            }
+            result += "\\\\";
             i++;
+            continue;
           }
-        } else {
-          result += ch;
+
+          // A quote character — decide if it closes the string or is embedded
+          if (c === '"') {
+            // Look ahead: if the next non-whitespace is a structural JSON char
+            // ( : , } ] ) or end-of-string, this quote closes the string.
+            const rest = jsonStr.slice(i + 1).trimStart();
+            if (rest.length === 0 || /^[,:}\]]/.test(rest)) {
+              result += '"';
+              i++;
+              break; // end of this JSON string value
+            }
+            // Otherwise it's an embedded quote inside the string value — escape it
+            result += '\\"';
+            i++;
+            continue;
+          }
+
+          // Escape raw control characters
+          if (c === "\n") { result += "\\n"; }
+          else if (c === "\r") { result += "\\r"; }
+          else if (c === "\t") { result += "\\t"; }
+          else if (c === "\b") { result += "\\b"; }
+          else if (c === "\f") { result += "\\f"; }
+          else if (c.charCodeAt(0) < 32) {
+            result += "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
+          }
+          else { result += c; }
+
           i++;
         }
       }
+
+      // Strip trailing commas before } (another common LLM mistake)
+      result = result.replace(/,\s*}/g, "}");
+
       return result;
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(sanitizeJsonResponse(content));
-    } catch {
-      const jsonMatch = content.match(/\{[\s\S]*?\}/);
-      if (!jsonMatch) throw new Error("Could not parse AI response as JSON");
-      parsed = JSON.parse(sanitizeJsonResponse(jsonMatch[0]));
+    /**
+     * Regex-based fallback: extract a single field value from raw JSON-ish text.
+     * Handles multi-line values by finding the field key, then capturing everything
+     * up to the next top-level field or closing brace.
+     */
+    function extractField(text, fieldName) {
+      // Match "fieldName" : "..." where the value might span many lines
+      // Use a pattern that finds the key, then captures up to the next
+      // unescaped quote that's followed by a structural char.
+      const keyPattern = new RegExp(`"${fieldName}"\\s*:\\s*"`);
+      const keyMatch = keyPattern.exec(text);
+      if (!keyMatch) return null;
+
+      const startIdx = keyMatch.index + keyMatch[0].length;
+      let value = "";
+      let j = startIdx;
+      while (j < text.length) {
+        const c = text[j];
+        if (c === "\\") {
+          value += c;
+          j++;
+          if (j < text.length) {
+            value += text[j];
+            j++;
+          }
+          continue;
+        }
+        if (c === '"') {
+          // Check if this closes the field
+          const after = text.slice(j + 1).trimStart();
+          if (after.length === 0 || /^[,}\]]/.test(after)) {
+            break;
+          }
+          // Embedded quote
+          value += '\\"';
+          j++;
+          continue;
+        }
+        if (c === "\n") { value += "\\n"; }
+        else if (c === "\r") { value += "\\r"; }
+        else if (c === "\t") { value += "\\t"; }
+        else { value += c; }
+        j++;
+      }
+
+      try {
+        return JSON.parse(`"${value}"`);
+      } catch {
+        return value;
+      }
     }
+
+    let parsed;
+    parsed = extractJsonObject(content);
 
     const normCode = (s) =>
       s
