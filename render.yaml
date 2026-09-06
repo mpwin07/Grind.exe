@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: grind-exe
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run render:build
+    startCommand: npm run render:start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GROQ_API_KEY
+        sync: false   # Set this manually in Render dashboard → Environment

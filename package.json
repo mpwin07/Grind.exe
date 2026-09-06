@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"nodemon server/index.js\"",
     "build": "vite build",
-    "start": "node server/index.js",
+    "render:build": "vite build",
+    "render:start": "NODE_ENV=production node server/index.js",
+    "start": "NODE_ENV=production node server/index.js",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

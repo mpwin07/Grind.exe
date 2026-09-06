@@ -16,8 +16,9 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
+// In production, frontend is served by this same Express server (same-origin),
+// so CORS is only needed for local development.
 const allowedOrigins = [
-  "https://grind-exe.onrender.com",
   "http://localhost:5173",
   "http://localhost:3000",
   "http://localhost:5000",
@@ -26,7 +27,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (e.g. mobile apps, curl, Postman)
+      // Allow requests with no origin (curl, Postman, same-origin browser requests)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
