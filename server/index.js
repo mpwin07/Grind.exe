@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
+import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 
@@ -48,11 +49,14 @@ app.use("/api/health", healthRoutes);
 
 
 
-// In production, serve the built frontend
-if (process.env.NODE_ENV === "production") {
-  app.use(express.static(path.join(__dirname, "..", "dist")));
+// Serve the built frontend if dist/ folder exists (i.e. after running vite build)
+// This avoids relying on NODE_ENV being set correctly on the host.
+const distPath = path.join(__dirname, "..", "dist");
+if (existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // All non-API routes → serve index.html (React Router handles client-side routing)
   app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "..", "dist", "index.html"));
+    res.sendFile(path.join(distPath, "index.html"));
   });
 }
 
